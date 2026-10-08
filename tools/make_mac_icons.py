@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Build every macOS app-icon size from logo.png.
+"""Build every macOS app-icon size from logo-wide.png.
 
 Run from the repo root:  python3 tools/make_mac_icons.py
 
-  input:  logo.png  (transparent wordmark, 1024x1024)
+  input:  logo-wide.png  (transparent Gujarati wordmark, 1536x1024)
   output: mac/Aavija/Assets.xcassets/AppIcon.appiconset/*.png
 
 The wordmark is blue, so it goes on a dark squircle (rounded square) —
@@ -15,7 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "logo.png"
+SRC = ROOT / "logo-wide.png"
 OUT = ROOT / "mac" / "Aavija" / "Assets.xcassets" / "AppIcon.appiconset"
 
 BASE = 1024

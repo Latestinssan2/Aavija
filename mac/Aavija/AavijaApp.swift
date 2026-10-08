@@ -6,12 +6,14 @@ import SwiftUI
 struct AavijaApp: App {
     var body: some Scene {
         // MenuBarExtra = a SwiftUI Scene that lives ONLY in the macOS menu bar.
-        // The `label` closure draws the tiny icon; the content closure is what
-        // appears when you click it.
+        // The `label` closure draws the tiny menu-bar item (Gujarati text);
+        // the content closure is what appears when you click it.
         MenuBarExtra {
             ContentView()
         } label: {
-            Image(systemName: "hand.raised.fill") // SF Symbol — Apple's built-in icon set
+            // Text (not an image): macOS renders it sharp at any size and
+            // auto-tints it white/black to match the menu bar appearance.
+            Text("આવી જા")
         }
         .menuBarExtraStyle(.window) // click opens a small panel, not a dropdown menu
     }

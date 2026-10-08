@@ -8,7 +8,7 @@ struct ContentView: View {
             Image("Logo")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 120, height: 120)
+                .frame(width: 180, height: 120) // wide (3:2) wordmark
 
             Text("Aavija")
                 .font(.headline)
