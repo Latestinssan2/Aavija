@@ -1,0 +1,21 @@
+# macOS junk
+.DS_Store
+
+# Xcode (Mac app)
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Android / Gradle
+*.iml
+.gradle/
+local.properties
+.idea/
+.cxx/
+captures/
