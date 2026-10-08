@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox: macOS feature that limits what the app may touch.
+	     We keep it ON (it's the safe default) and explicitly grant network use. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- network.client: connect OUT to other devices (browsing/discovering peers) -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- network.server: accept INCOMING connections (receiving files) -->
+	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- network.multicast: required for Bonjour/mDNS discovery traffic -->
+	<key>com.apple.security.network.multicast</key>
+	<true/>
+</dict>
+</plist>
