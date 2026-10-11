@@ -34,20 +34,50 @@ import javax.net.ssl.SSLServerSocket
 object TlsIdentity {
 
     /**
+     * The ONE keypair + certificate this phone uses for its whole run.
+     *
+     * This is the crux of the whole pairing scheme, so it is spelled out:
+     * the certificate the TLS server PRESENTS on the wire and the certificate
+     * we HASH into [fingerprint] must be the SAME object. The Mac binds its PIN
+     * proof to the fingerprint it saw during the handshake, and we verify that
+     * proof against our own [fingerprint]. If the two certs were minted
+     * separately — as they used to be — the Mac would bind to one and we'd
+     * check against the other, and EVERY PIN (correct or not) would be rejected.
+     *
+     * Minted lazily on first use, then shared by BOTH [fingerprint] and
+     * [createSslServerSocket]. Never regenerate it inside a running app.
+     */
+    @Volatile
+    private var keyStore: KeyStore? = null
+
+    /**
      * This phone's own certificate fingerprint (SHA-256 of the DER cert, hex).
      * The PIN-pairing proof is bound to this value: a Mac must have seen THIS
      * exact cert during the TLS handshake to produce a matching proof, so a
-     * man-in-the-middle showing its own cert is rejected. Computed lazily on
-     * first use and cached — the identity is minted once per app run.
+     * man-in-the-middle showing its own cert is rejected.
      */
     @Volatile
     private var cachedFingerprint: String? = null
 
+    /** The shared identity, minted once on first use (thread-safe). */
+    private fun identity(): KeyStore {
+        keyStore?.let { return it }
+        synchronized(this) {
+            keyStore?.let { return it }
+            return createKeyStore().also { keyStore = it }
+        }
+    }
+
+    /**
+     * This phone's certificate — exactly the one the TLS server presents.
+     * Exposed so tests can prove the presented cert IS the fingerprinted one.
+     */
+    fun certificate(): X509Certificate =
+        identity().getCertificate("aavija") as X509Certificate
+
     fun fingerprint(): String {
         cachedFingerprint?.let { return it }
-        val ks = createKeyStore()
-        val cert = ks.getCertificate("aavija") as java.security.cert.X509Certificate
-        val fp = PairingCrypto.fingerprint(cert.encoded)
+        val fp = PairingCrypto.fingerprint(certificate().encoded)
         cachedFingerprint = fp
         return fp
     }
@@ -99,9 +129,11 @@ object TlsIdentity {
      * let the OS pick a free port (same trick as the plain ServerSocket).
      */
     fun createSslServerSocket(): SSLServerSocket {
-        val keyStore = createKeyStore()
+        // Use the SAME identity we fingerprint — see [identity]. Minting a
+        // second cert here is precisely the bug that made every PIN fail.
+        val ks = identity()
         val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-        kmf.init(keyStore, charArrayOf()) // empty password: in-memory only
+        kmf.init(ks, charArrayOf()) // empty password: in-memory only
         val ctx = SSLContext.getInstance("TLS")
         ctx.init(kmf.keyManagers, null, null)
         return ctx.serverSocketFactory.createServerSocket(0) as SSLServerSocket

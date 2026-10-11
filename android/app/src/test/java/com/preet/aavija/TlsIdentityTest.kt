@@ -136,4 +136,39 @@ class TlsIdentityTest {
             serverSaw.toString(),
         )
     }
+
+    @Test
+    fun `the certificate presented on the wire is the one we fingerprint`() {
+        // THE regression test for pairing. The Mac binds its PIN proof to the
+        // fingerprint of the cert it saw during the handshake, and the phone
+        // verifies that proof against TlsIdentity.fingerprint(). Those two
+        // MUST describe the same certificate. When they didn't (a fresh random
+        // cert was minted for each), every PIN — even the right one — was
+        // rejected as "wrong".
+        val server = TlsIdentity.createSslServerSocket()
+        val port = server.localPort
+
+        val presented = java.util.concurrent.atomic.AtomicReference<X509Certificate>()
+        val serverThread = Thread {
+            server.use { srv ->
+                srv.accept().use { conn -> (conn as SSLSocket).startHandshake() }
+            }
+        }
+        serverThread.start()
+
+        trustAllClientContext().socketFactory.createSocket("127.0.0.1", port).use { raw ->
+            val client = raw as SSLSocket
+            client.use { c ->
+                c.startHandshake()
+                presented.set(c.session.peerCertificates[0] as X509Certificate)
+            }
+        }
+        serverThread.join(10_000)
+
+        assertEquals(
+            "the cert the phone PRESENTS must be the cert we hash for pairing",
+            TlsIdentity.fingerprint(),
+            PairingCrypto.fingerprint(presented.get().encoded),
+        )
+    }
 }
