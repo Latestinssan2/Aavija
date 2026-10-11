@@ -59,6 +59,157 @@ final class Connector: ObservableObject {
     /// Pending retry reconnect, so we can cancel it on quit/unpair/success.
     private var retryTask: Task<Void, Never>?
 
+    // MARK: - Phase 5b: "did the user tap me on the phone?"
+
+    /// The phone the browser found. We keep asking it for instructions.
+    ///
+    /// This exists because the phone can NEVER dial us — it's the listener, and
+    /// our `NWListener` is broken on this machine anyway. So the only way a tap
+    /// on the phone's device list can travel Mac-ward is for US to poll. Every
+    /// couple of seconds we open a TLS connection and ask a one-word question;
+    /// the phone answers "show a PIN" only if the user picked our name.
+    private var pollEndpoint: NWEndpoint?
+
+    /// Pending poll timer, so it can be cancelled or replaced.
+    private var pollTask: Task<Void, Never>?
+
+    /// Have we already told the user a guess was wrong? Set so the warning
+    /// stays on screen instead of being overwritten by the retry loop's
+    /// friendlier "type this PIN" line 1.5 seconds later.
+    private var hasSeenWrongPin = false
+
+    /// Called by the app whenever the phone list changes.
+    func phoneWasFound(_ endpoint: NWEndpoint?) {
+        pollEndpoint = endpoint
+        if endpoint == nil {
+            pausePolling()
+            return
+        }
+        resumePolling()
+    }
+
+    /// Ask again shortly — unless we're busy pairing, paired, or already have
+    /// a poll in the air. Returning without doing anything is the point.
+    private func resumePolling() {
+        guard pollTask == nil, pollEndpoint != nil,
+              pairingEndpoint == nil, !isPaired
+        else { return }
+        scheduleNextPoll()
+    }
+
+    /// Stop asking for now, but remember which phone to ask later.
+    private func pausePolling() {
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    /// Forget the phone entirely (quit / nothing found).
+    func stopPolling() {
+        pausePolling()
+        pollEndpoint = nil
+    }
+
+    private func scheduleNextPoll() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s between asks
+            guard !Task.isCancelled else { return }
+            self?.pollTask = nil
+            self?.pollOnce()
+        }
+    }
+
+    /// One poll: connect, ask, act on the answer.
+    private func pollOnce() {
+        guard let endpoint = pollEndpoint,
+              pairingEndpoint == nil,   // don't collide with a live pairing
+              !isPaired
+        else { return }
+
+        let tlsOptions = NWProtocolTLS.Options()
+        // A poll only asks a yes/no question, so there's no fingerprint to
+        // pin here — we just have to accept the phone's self-signed cert so
+        // the tunnel opens. Trust is not established by a poll: nothing is
+        // verified, nothing is stored, and no PIN attempt can be burned.
+        sec_protocol_options_set_verify_block(
+            tlsOptions.securityProtocolOptions,
+            { _, _, completion in completion(true) },
+            .main
+        )
+
+        let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
+        connection.stateUpdateHandler = { [weak self] nwState in
+            MainActor.assumeIsolated {
+                switch nwState {
+                case .ready:
+                    self?.runPoll(on: connection, to: endpoint)
+                case .failed, .waiting:
+                    // Can't reach the phone (or it's asleep). Drop this
+                    // connection — the .cancelled that follows is what
+                    // schedules the next attempt, so we never stack up two
+                    // polls at once or leak a socket that's stuck retrying.
+                    connection.cancel()
+                case .cancelled:
+                    self?.resumePolling()
+                default:
+                    break
+                }
+            }
+        }
+        connection.start(queue: .main)
+    }
+
+    /// Read the phone's challenge (it always speaks first), then ask our question.
+    private func runPoll(on connection: NWConnection, to endpoint: NWEndpoint) {
+        readLine(on: connection) { [weak self] challengeLine in
+            MainActor.assumeIsolated {
+                guard let self, challengeLine != nil else {
+                    connection.cancel()
+                    return
+                }
+                // The name we poll with must be the same string we BROADCAST
+                // (MacAdvertiser registers the identical call), because the
+                // phone matches it against the row you tapped.
+                let name = MacAdvertiser.displayName()
+                let message = PollMessage(name: name)
+                guard let data = try? JSONEncoder().encode(message),
+                      let line = String(data: data, encoding: .utf8)
+                else {
+                    connection.cancel()
+                    return
+                }
+                connection.send(content: Data((line + "\n").utf8),
+                                 completion: .contentProcessed { _ in
+                    MainActor.assumeIsolated {
+                        self.readPollAnswer(on: connection, to: endpoint)
+                    }
+                })
+            }
+        }
+    }
+
+    /// If the phone says the user tapped US, stop asking and show a PIN.
+    private func readPollAnswer(on connection: NWConnection, to endpoint: NWEndpoint) {
+        readLine(on: connection) { [weak self] line in
+            MainActor.assumeIsolated {
+                defer { connection.cancel() }
+                guard let self, let line,
+                      let reply = try? JSONDecoder().decode(
+                          PollResponse.self, from: Data(line.utf8)
+                      )
+                else { return }
+
+                if reply.action == "pair" {
+                    // Someone picked this Mac on their phone. Generate a PIN,
+                    // put it on screen, and let the normal retry loop verify
+                    // whatever they type.
+                    self.pausePolling()
+                    self.pair(with: endpoint)
+                }
+            }
+        }
+    }
+
     init(store: PairingStore = PairingStore()) {
         self.store = store
         self.isPaired = store.isPaired
@@ -79,6 +230,10 @@ final class Connector: ObservableObject {
         connection?.cancel()
         connection = nil
         capturedFingerprint = nil
+        // We're pairing with THIS phone now, so stop asking it questions.
+        pausePolling()
+        // Fresh session: any "wrong PIN" warning from a previous one is stale.
+        hasSeenWrongPin = false
 
         // Fresh PIN for this attempt. Shown to the user, typed into the phone.
         self.pin = Pairing.generatePin()
@@ -126,12 +281,14 @@ final class Connector: ObservableObject {
                     self?.pin = nil
                     self?.pairingEndpoint = nil
                     self?.retryTask?.cancel()
+                    self?.resumePolling()
                     connection.cancel()
                 case .waiting(let error):
                     // .waiting = "can't reach it right now" (e.g. phone slept).
                     self?.state = .failed(error.localizedDescription)
                     self?.pin = nil
                     self?.pairingEndpoint = nil
+                    self?.resumePolling()
                 case .cancelled:
                     if self?.connection === connection {
                         self?.connection = nil
@@ -174,7 +331,9 @@ final class Connector: ObservableObject {
                 let proof = Pairing.proof(pin: self.pin ?? "", salt: salt, fingerprint: fingerprint)
                 let message = PairMessage(
                     proof: Pairing.hex(proof),
-                    name: Host.current().localizedName ?? "Aavija Mac"
+                    // Same string we broadcast and poll with — the phone uses
+                    // it to check this Mac is the one the user tapped.
+                    name: MacAdvertiser.displayName()
                 )
                 self.sendPair(message, on: connection)
             }
@@ -230,6 +389,7 @@ final class Connector: ObservableObject {
                     self.pairingEndpoint = nil
                     self.retryTask?.cancel()
                     self.retryTask = nil
+                    self.stopPolling() // paired — no need to ask anything
 
                 case "locked":
                     self.pairingStatus = "Too many wrong PINs — try again in a few minutes."
@@ -237,13 +397,22 @@ final class Connector: ObservableObject {
                     self.pairingEndpoint = nil
                     self.retryTask?.cancel()
                     self.retryTask = nil
+                    self.resumePolling()
 
                 default: // "rejected"
                     let reason = verdict.reason ?? "wrong pin"
                     if reason == "no pin entered" {
-                        // The user hasn't typed the PIN on the phone yet —
-                        // this is EXPECTED while they're reading it. Keep
+                        // The user hasn't pressed Submit on the phone yet —
+                        // this is EXPECTED while they're reading the PIN. Keep
                         // retrying rather than giving up.
+                        self.scheduleRetry()
+                    } else if reason == "wrong pin" {
+                        // Keep the SAME PIN on screen and keep trying. The phone
+                        // allows five guesses, so the user must be able to
+                        // retype and press Submit again without waiting for a
+                        // fresh PIN — and the phone buzzes + shows "N left".
+                        self.hasSeenWrongPin = true
+                        self.pairingStatus = "Wrong PIN — check it and press Submit again"
                         self.scheduleRetry()
                     } else {
                         self.pairingStatus = "Rejected: \(reason)"
@@ -251,6 +420,7 @@ final class Connector: ObservableObject {
                         self.pairingEndpoint = nil
                         self.retryTask?.cancel()
                         self.retryTask = nil
+                        self.resumePolling()
                     }
                 }
                 connection.cancel()
@@ -262,12 +432,17 @@ final class Connector: ObservableObject {
     /// shortly, until the user has had time to type the PIN or we time out.
     private func scheduleRetry() {
         guard let deadline = pairingDeadline, Date() < deadline else {
-            pairingStatus = "Timed out waiting for the PIN. Click Pair to try again."
+            pairingStatus = "Timed out waiting for the PIN. Tap your Mac on the phone to try again."
             pin = nil
             pairingEndpoint = nil
+            resumePolling() // back to asking the phone whether it wants us
             return
         }
-        pairingStatus = "Type this PIN on your phone…"
+        // After a wrong guess we leave the warning up. Flipping straight back
+        // to "type this PIN" would hide the fact that the guess was rejected.
+        if !hasSeenWrongPin {
+            pairingStatus = "Type this PIN on your phone…"
+        }
         // The just-cancelled connection would leave us stuck at .connected;
         // go back to .connecting so the state doesn't lie between retries.
         state = .connecting
@@ -322,7 +497,8 @@ final class Connector: ObservableObject {
         pairingEndpoint = nil
         store.clear()
         isPaired = false
-        pairingStatus = "Unpaired. Pair again with the PIN."
+        pairingStatus = "Unpaired. Tap this Mac on your phone to pair again."
+        resumePolling() // unpaired again — go back to listening for a tap
     }
 
     /// Clean up on quit.
@@ -330,6 +506,7 @@ final class Connector: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         pairingEndpoint = nil
+        stopPolling()
         connection?.cancel()
         connection = nil
         state = .idle
@@ -359,6 +536,19 @@ private struct PairMessage: Encodable {
     let type = "pair"
     let proof: String
     let name: String
+}
+
+/// "Did the user tap my name on the phone?" (Phase 5b). Answered before the
+/// user has picked anything, so it must stay cheap and prove nothing.
+private struct PollMessage: Encodable {
+    let type = "poll"
+    let name: String
+}
+
+/// The phone's answer to a poll: `pair` (show a PIN) or `wait`.
+private struct PollResponse: Decodable {
+    let type: String
+    let action: String?
 }
 
 /// The phone's verdict.

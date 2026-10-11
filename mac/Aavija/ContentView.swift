@@ -45,8 +45,10 @@ struct ContentView: View {
             } else {
                 VStack(spacing: 6) {
                     ForEach(browser.devices) { device in
-                        // Tapping a phone begins PAIRING (Phase 3b): we generate
-                        // a PIN, connect over TLS, and prove we know it.
+                        // Normally the PIN appears on its own the moment you
+                        // tap this Mac on your phone (the Mac polls the phone
+                        // and is told to start). The button stays as a manual
+                        // fallback for when that poll can't get through.
                         Button {
                             connector.pair(with: device.endpoint)
                         } label: {
@@ -66,6 +68,11 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                     }
                 }
+                Text("Or open Aavija on your phone and tap this Mac — the PIN appears here by itself.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 4)
             }
 
             // The PIN to type into the phone — big and unmissable while pairing.

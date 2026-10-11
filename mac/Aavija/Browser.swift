@@ -26,6 +26,14 @@ final class Browser: ObservableObject {
     @Published private(set) var devices: [Device] = []
     @Published private(set) var isSearching: Bool = false
 
+    /// Called every time the phone list changes. Phase 5b uses this to start
+    /// asking a phone whether its user tapped us — the phone can't dial us, so
+    /// we have to poll, and polling needs an endpoint to poll.
+    ///
+    /// Set once at app launch, before the panel is ever opened, so it works
+    /// even while the menu-bar window is closed.
+    var onDevicesChanged: (([Device]) -> Void)?
+
     private var browser: NWBrowser?
 
     /// Kick off browsing as soon as the object is created (at app launch),
@@ -101,6 +109,11 @@ final class Browser: ObservableObject {
             }
         }
         // Sort by name so the list doesn't jump around as results change.
-        devices = found.sorted { $0.name < $1.name }
+        let sorted = found.sorted { $0.name < $1.name }
+        // Only announce real changes: NWBrowser replays its whole result set
+        // often, and waking the poller on every replay would be pointless work.
+        guard sorted != devices else { return }
+        devices = sorted
+        onDevicesChanged?(sorted)
     }
 }

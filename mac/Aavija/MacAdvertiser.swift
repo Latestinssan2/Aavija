@@ -38,6 +38,22 @@ final class MacAdvertiser {
     /// The real Mac name we're broadcasting, e.g. "Sandipkumar's MacBook Pro".
     private(set) var machineName: String = Host.current().localizedName ?? "Mac"
 
+    /**
+     * THIS machine's display name, with the fallbacks spelled out once.
+     *
+     * It has to be a single function because three different places must agree
+     * byte-for-byte: the name we BROADCAST over mDNS, the name we POLL the
+     * phone with, and the name we send when we PAIR. The phone matches that
+     * string against the row you tapped — if any one of them fell back
+     * differently, the phone would say "not the selected device" and pairing
+     * would silently never work.
+     */
+    static func displayName() -> String {
+        Host.current().localizedName
+            ?? ProcessInfo.processInfo.hostName
+            .replacingOccurrences(of: ".local", with: "")
+    }
+
     /// Handle for the running registration. Must be kept alive for as long as
     /// we want to stay visible — releasing it withdraws us from the network.
     private var serviceRef: DNSServiceRef?
@@ -52,9 +68,7 @@ final class MacAdvertiser {
         // Host.current().localizedName is macOS's "Computer Name" — the same
         // string shown in Finder's sidebar. Fall back to the raw hostname if
         // it's unavailable so we never register an empty instance name.
-        let name = Host.current().localizedName
-            ?? ProcessInfo.processInfo.hostName
-            .replacingOccurrences(of: ".local", with: "")
+        let name = Self.displayName()
         machineName = name
 
         // A dummy port: nobody dials this. mDNS needs *a* port field, and 0

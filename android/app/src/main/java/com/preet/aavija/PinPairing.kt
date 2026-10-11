@@ -57,6 +57,18 @@ class PinPairing(
     }
 
     /**
+     * How many guesses the user has left before a lockout. The phone shows this
+     * so "5 wrong PINs" is never a surprise — you can see the counter drop.
+     *
+     * While locked out the answer is deliberately 0, not "5 again": the
+     * attempt counter is reset when a lockout begins (so it's fresh for after
+     * the cooldown), but telling the user they have five tries during a
+     * five-minute lockout would be a lie.
+     */
+    fun attemptsRemaining(): Int =
+        if (isLockedOut()) 0 else (MAX_ATTEMPTS - store.attempts()).coerceAtLeast(0)
+
+    /**
      * Verify a submitted pairing proof against the PIN the user typed into the
      * phone. [phoneFingerprint] is THIS phone's own cert fingerprint — the Mac's
      * proof must have been bound to the same value, so a MITM that showed the

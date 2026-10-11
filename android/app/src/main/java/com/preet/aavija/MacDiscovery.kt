@@ -21,10 +21,16 @@ import kotlinx.coroutines.flow.asStateFlow
  * this class listens for those announcements.
  *
  * ### The two-step nature of NsdManager
- * Discovery only yields *service names* — no addresses, no details. To get
- * anything useful you must call [resolveService] on each one. Android also
- * forbids resolving the same service twice at once, so we track what's already
- * in flight (and drop repeats) rather than letting it throw.
+ * `onServiceFound` hands you the *instance name* (the Mac's real machine name)
+ * but nothing else. The usual next step is [NsdManager.resolveService], which
+ * fills in the address and port — and which is, in practice, the single most
+ * failure-prone call in the whole API (it throws if another resolve is in
+ * flight, and it silently times out when a record is fresh).
+ *
+ * We deliberately **don't call it**. Resolving exists to learn *where* to dial,
+ * and this phone never dials a Mac — in our swapped architecture the Mac dials
+ * us. So the name from `onServiceFound` is all we need, and skipping resolve
+ * turns a flaky list into an instant one.
  *
  * This is Android's side of discovery; the Mac's side is `Browser.swift`,
  * which browses for the *phone's* service. The two run independently and do
@@ -36,6 +42,25 @@ class MacDiscovery(context: Context) {
         private const val TAG = "AavijaMacDiscovery"
         /** Must match `MacAdvertiser.serviceType` on the Mac exactly. */
         const val MAC_SERVICE_TYPE = "_aavija-mac._tcp"
+
+        /**
+         * Is a service type reported by Android the one we're browsing for?
+         *
+         * Android is inconsistent about the exact string it hands back: some
+         * versions return `_aavija-mac._tcp`, others `_aavija-mac._tcp.local.`
+         * or a different case. Comparing literally (which is what this used to
+         * do) throws away every Mac the moment the string doesn't match
+         * character-for-character — so normalise first, then compare.
+         */
+        fun isOurType(reported: String?): Boolean {
+            val normalised = (reported ?: "")
+                .trim()
+                .trimEnd('.')
+                .removeSuffix(".local")
+                .trimEnd('.')
+                .lowercase()
+            return normalised == MAC_SERVICE_TYPE
+        }
     }
 
     /** One Mac the phone can see on this network. */
@@ -54,10 +79,6 @@ class MacDiscovery(context: Context) {
         context.getSystemService(Context.NSD_SERVICE) as NsdManager
 
     private var discoveryListener: NsdManager.DiscoveryListener? = null
-    private var resolveListener: NsdManager.ResolveListener? = null
-
-    /** Names we've already asked to resolve, to avoid duplicate in-flight calls. */
-    private val resolving = mutableSetOf<String>()
 
     /** Start watching for Macs. Safe to call more than once. */
     fun start() {
@@ -69,16 +90,19 @@ class MacDiscovery(context: Context) {
             }
 
             override fun onServiceFound(info: NsdServiceInfo) {
-                // A Mac announced itself. We only care about our own type —
-                // Android can surface other services on some networks.
-                if (info.serviceType != MAC_SERVICE_TYPE) return
-                requestResolve(info)
+                // A Mac announced itself. Android can surface other service
+                // types on some networks, so filter — but leniently (see
+                // isOurType) rather than with a literal string compare.
+                if (!isOurType(info.serviceType)) {
+                    Log.d(TAG, "Ignoring service '${info.serviceName}' of type '${info.serviceType}'")
+                    return
+                }
+                addDevice(info.serviceName)
             }
 
             override fun onServiceLost(info: NsdServiceInfo) {
-                if (info.serviceType != MAC_SERVICE_TYPE) return
+                if (!isOurType(info.serviceType)) return
                 Log.i(TAG, "Mac went away: ${info.serviceName}")
-                resolving.remove(info.serviceName)
                 _macs.value = _macs.value.filterNot { it.id == info.serviceName }
             }
 
@@ -102,50 +126,21 @@ class MacDiscovery(context: Context) {
     }
 
     /**
-     * Ask Android for the details of one found service, then add it to the list.
+     * Add (or re-announce) one Mac. Called straight from `onServiceFound`.
      *
-     * Two guards, both learned the hard way with NsdManager:
-     *  - Android throws if you resolve while another resolve is still running
-     *    for that service, so we keep a set of in-flight names.
-     *  - There's exactly one ResolveListener slot per NsdManager in practice,
-     *    so we keep a single reusable listener rather than allocating per call.
+     * Android re-sends the announcement every so often, so this runs again for
+     * a Mac we already have. We must NOT duplicate the row or reorder the
+     * list — the user may be about to tap one, and a list that reshuffles under
+     * their finger picks the wrong device. Hence: keep the existing entry
+     * untouched if we already have it, and sort by name so order is stable.
      */
-    private fun requestResolve(info: NsdServiceInfo) {
-        val name = info.serviceName ?: return
-        if (name in resolving) return
-        resolving.add(name)
-
-        val listener = object : NsdManager.ResolveListener {
-            override fun onServiceResolved(result: NsdServiceInfo) {
-                resolving.remove(result.serviceName)
-                val resolvedName = result.serviceName ?: return
-                Log.i(TAG, "Resolved Mac: $resolvedName")
-
-                val device = MacDevice(id = resolvedName, name = resolvedName)
-                val current = _macs.value
-                // Replace if we already had it (a re-resolve), else append.
-                val updated = current.filterNot { it.id == device.id } + device
-                _macs.value = updated.sortedBy { it.name.lowercase() }
-            }
-
-            override fun onResolveFailed(info: NsdServiceInfo, errorCode: Int) {
-                resolving.remove(info.serviceName)
-                // Resolution failures are common and usually transient (the
-                // Mac's record can vanish mid-resolve). Not fatal: the next
-                // announcement will try again.
-                Log.w(TAG, "Resolve failed for ${info.serviceName}: code $errorCode")
-            }
-        }
-
-        resolveListener = listener
-        try {
-            nsdManager.resolveService(info, listener)
-        } catch (e: Exception) {
-            // The race we were guarding against still happened — forget it and
-            // let a later announcement retry rather than crashing the app.
-            resolving.remove(name)
-            Log.w(TAG, "resolveService threw: ${e.message}")
-        }
+    private fun addDevice(name: String?) {
+        val id = name ?: return
+        val current = _macs.value
+        if (current.any { it.id == id }) return // already listed — leave it alone
+        Log.i(TAG, "Found Mac: $id")
+        _macs.value = (current + MacDevice(id = id, name = id))
+            .sortedBy { it.name.lowercase() }
     }
 
     /** Stop browsing and forget everything found (called on teardown). */
@@ -159,8 +154,6 @@ class MacDiscovery(context: Context) {
             }
         }
         discoveryListener = null
-        resolveListener = null
-        resolving.clear()
         _macs.value = emptyList()
     }
 }

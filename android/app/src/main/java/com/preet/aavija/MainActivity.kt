@@ -1,24 +1,34 @@
 package com.preet.aavija
 
+import android.content.Context
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 /**
  * Phase 1c of Aavija (swapped architecture):
@@ -66,23 +76,38 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
     val pin by advertiser.typedPin.collectAsState()
     val macs by macDiscovery.macs.collectAsState()
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
 
-    // True once the user has tapped Submit with a full 6-digit PIN. It only
-    // drives the "waiting" note — the PIN itself lives in the advertiser.
-    var pinSubmitted by remember { mutableStateOf(false) }
+    // Phase 5b: a wrong PIN should be FELT, not just read. wrongPinCount goes
+    // up by one per wrong guess, so buzzing on each change buzzes once per
+    // attempt. (LaunchedEffect re-runs when its key changes — that's the
+    // whole trick here.)
+    LaunchedEffect(state.wrongPinCount) {
+        if (state.wrongPinCount > 0) buzzWrongPin(context)
+    }
 
-    // A real outcome from the Mac (paired / wrong PIN / locked out) replaces
-    // the waiting note, so drop it and let the status line take over.
-    LaunchedEffect(state.lastPairing, state.isPaired) {
-        if (state.isPaired || (state.lastPairing != null && !state.isWaitingForPin)) {
-            pinSubmitted = false
-        }
+    // The PIN popup only exists once a device is picked. Tapping a row calls
+    // selectMac, which sets state.selectedMac — that's what opens this.
+    val selectedMac = state.selectedMac
+    if (selectedMac != null && !state.isPaired) {
+        PinEntryPopup(
+            macName = selectedMac,
+            pin = pin,
+            state = state,
+            onPinChange = { advertiser.setPin(it) },
+            onSubmit = {
+                advertiser.submitPin()          // arms exactly one verification
+                focusManager.clearFocus()       // dismiss the keyboard
+            },
+            onDismiss = { advertiser.selectMac(null) },
+        )
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -108,8 +133,9 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
             Text("Starting discovery…", fontSize = 18.sp)
         }
 
-        // Phase 5a: Macs this phone can see on the Wi-Fi. Display only for
-        // now — tapping/selecting a Mac and filtering on it lands in 5b.
+        // Phase 5b: tap a Mac to pick it. The list is sorted by name and rows
+        // are keyed by id, so it does NOT reshuffle when another device
+        // appears — which is what stops your finger landing on the wrong one.
         Spacer(Modifier.height(24.dp))
         Text("Available Macs", fontSize = 13.sp, color = Color.Gray)
         Spacer(Modifier.height(6.dp))
@@ -126,69 +152,19 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
                 horizontalAlignment = Alignment.Start,
             ) {
                 macs.forEach { mac ->
-                    DeviceRow(name = mac.name)
+                    DeviceRow(
+                        name = mac.name,
+                        isSelected = mac.name == selectedMac,
+                        onClick = { advertiser.selectMac(mac.name) },
+                    )
                     Spacer(Modifier.height(6.dp))
                 }
             }
         }
 
-        // Phase 3b: PIN entry. Type the 6 digits the Mac is showing.
-        Spacer(Modifier.height(28.dp))
-        Text("Pairing PIN", fontSize = 13.sp, color = Color.Gray)
-        Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
-            value = pin,
-            onValueChange = {
-                pinSubmitted = false // editing invalidates the confirmation
-                advertiser.setPin(it)
-            },
-            modifier = Modifier.width(160.dp),
-            singleLine = true,
-            enabled = !state.isPaired, // no need to type once paired
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            textStyle = LocalTextStyle.current.copy(
-                fontSize = 24.sp,
-                textAlign = TextAlign.Center,
-                letterSpacing = 6.sp,
-            ),
-        )
-
-        // Submit: confirm the PIN is typed. This can't push the PIN to the Mac
-        // (the phone only listens — it never dials out), so all it really does
-        // is hide the keyboard and show "waiting". The Mac is already retrying
-        // every ~1.5s and will read the PIN on its next attempt. We still want
-        // the button because tapping the field's "done" key on some keyboards
-        // just dismisses the keyboard with no visible confirmation.
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = {
-                pinSubmitted = true
-                focusManager.clearFocus() // dismisses the keyboard
-            },
-            enabled = pin.length == 6 && !state.isPaired,
-            modifier = Modifier.width(160.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF2196F3),
-                disabledContainerColor = Color(0xFFBDBDBD),
-            ),
-        ) {
-            Text("Submit", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        }
-
-        // Shown after Submit until the Mac's next retry reports back.
-        if (pinSubmitted && !state.isPaired) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "PIN entered — your Mac will check it in a moment…",
-                fontSize = 13.sp,
-                color = Color(0xFFFF9800),
-                textAlign = TextAlign.Center,
-            )
-        }
-
         // Phase 3b: show the result of the last pairing attempt.
         if (state.lastPairing != null) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
             // Amber + "waiting" while a Mac pairs but the PIN isn't typed yet;
             // green once paired; red only for a real rejection or lockout.
             val statusColor = when {
@@ -201,25 +177,152 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
             Text(state.lastPairing!!, fontSize = 14.sp, color = statusColor)
         }
 
-        // Phase 2: show the last message the Mac sent us, once one arrives.
-        if (state.lastMessage != null) {
-            Spacer(Modifier.height(24.dp))
-            StatusDot(Color(0xFF2196F3)) // blue = "we heard something"
-            Spacer(Modifier.height(8.dp))
-            Text("Mac says:", fontSize = 13.sp, color = Color.Gray)
-            Text(state.lastMessage!!, fontSize = 16.sp)
-        }
-
-        Spacer(Modifier.height(40.dp))
+        Spacer(Modifier.height(24.dp))
         Text(
             if (state.isPaired)
                 "This phone is paired with your Mac."
+            else if (selectedMac != null)
+                "Tap to change device, or wait for the PIN popup."
             else
-                "Open the Aavija menu on your Mac to pair.",
+                "Tap a Mac above to pair with it.",
             fontSize = 13.sp,
             color = Color.Gray,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/**
+ * Phase 5b: the popup that appears the moment you tap a Mac in the list.
+ *
+ * It shows the PIN field, how many attempts you have left, and — once you're
+ * locked out — a countdown that actually ticks. Submit is the ONLY thing that
+ * lets the phone check a PIN, so a wrong guess can no longer be burned for you
+ * by the Mac's own retry loop.
+ */
+@Composable
+private fun PinEntryPopup(
+    macName: String,
+    pin: String,
+    state: BonjourAdvertiser.AdState,
+    onPinChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // A ticking clock. Recomputed every second while a lockout is running, so
+    // "4:59, 4:58, …" is a real countdown rather than a frozen number.
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.lockedUntilMs) {
+        while (true) {
+            now = System.currentTimeMillis()
+            if (now >= state.lockedUntilMs) break
+            delay(1_000)
+        }
+    }
+    val lockRemainingMs = (state.lockedUntilMs - now).coerceAtLeast(0)
+    val locked = lockRemainingMs > 0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pair with $macName") },
+        text = {
+            Column {
+                if (locked) {
+                    Text(
+                        "Too many wrong PINs. Try again in " +
+                            "${lockRemainingMs / 60_000}m " +
+                            "${(lockRemainingMs % 60_000) / 1_000}s",
+                        color = Color(0xFFF44336),
+                    )
+                } else {
+                    Text(
+                        "Type the 6-digit PIN your Mac is showing.",
+                        fontSize = 14.sp,
+                        color = Color.Gray,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = pin,
+                        onValueChange = onPinChange,
+                        modifier = Modifier.width(160.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        textStyle = LocalTextStyle.current.copy(
+                            fontSize = 24.sp,
+                            textAlign = TextAlign.Center,
+                            letterSpacing = 6.sp,
+                        ),
+                    )
+                    if (state.attemptsRemaining < PinPairing.MAX_ATTEMPTS) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "${state.attemptsRemaining} of ${PinPairing.MAX_ATTEMPTS} attempts left",
+                            fontSize = 13.sp,
+                            color = Color(0xFFF44336),
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    if (state.lastRejection != null) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            state.lastRejection!!,
+                            fontSize = 13.sp,
+                            color = Color(0xFFF44336),
+                        )
+                    }
+                    if (state.isWaitingForPin) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Waiting for your Mac…",
+                            fontSize = 13.sp,
+                            color = Color(0xFFFF9800),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onSubmit,
+                enabled = !locked && pin.length == 6,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF2196F3),
+                    disabledContainerColor = Color(0xFFBDBDBD),
+                ),
+            ) {
+                Text("Submit")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+/**
+ * One short buzz, so a wrong PIN is felt as well as read.
+ *
+ * Android moved to a multi-vibrator API in 12 (VibratorManager) and kept the
+ * old single one for everything below, so we ask for whichever exists. Every
+ * API used here is real; `hasVibrator()` is checked because some phones (and
+ * every emulator) simply have no motor.
+ */
+private fun buzzWrongPin(context: Context) {
+    try {
+        val vibrator: Vibrator = if (Build.VERSION.SDK_INT >= 31) {
+            val manager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE)
+            (manager as? VibratorManager)?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION") // pre-12 path; VIBRATOR_SERVICE still works
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        } ?: return
+
+        if (!vibrator.hasVibrator()) return
+        vibrator.vibrate(
+            VibrationEffect.createOneShot(180, VibrationEffect.DEFAULT_AMPLITUDE),
+        )
+    } catch (e: Exception) {
+        // A phone that refuses to buzz shouldn't take the whole screen down.
     }
 }
 
@@ -240,6 +343,8 @@ private fun StatusDot(color: Color) {
 
 /**
  * One row in the "Available Macs" list: a laptop glyph + the Mac's real name.
+ * Tapping it picks that device — the choice is sticky (stored by name, not by
+ * position in the list), so a new device appearing can't silently swap it.
  *
  * The NAME is genuinely read from the Mac (`Host.current().localizedName`) and
  * broadcast over mDNS, so it's authentic. The ICON is not — and can't be.
@@ -249,9 +354,17 @@ private fun StatusDot(color: Color) {
  * no bundled image asset.
  */
 @Composable
-private fun DeviceRow(name: String) {
+private fun DeviceRow(name: String, isSelected: Boolean, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                else Color.Transparent,
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LaptopIcon()
@@ -260,7 +373,13 @@ private fun DeviceRow(name: String) {
             name,
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
         )
+        if (isSelected) {
+            // A plain tick, drawn as text — no icon dependency, and it reads
+            // as "chosen" even for someone who has never seen this app.
+            Text("✓", fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+        }
     }
 }
 

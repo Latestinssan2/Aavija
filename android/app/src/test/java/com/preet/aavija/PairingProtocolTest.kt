@@ -18,8 +18,25 @@ class PairingProtocolTest {
     /** A store we can inspect / share across protocol instances in one test. */
     private val store = InMemoryPairingStore()
 
-    /** Build a protocol reading [pin] from the "screen" (fixed for tests). */
-    private fun proto(pin: String) = PairingProtocol(salt, phoneFp, store) { pin }
+    /**
+     * Build a protocol reading [pin] from the "screen" (fixed for tests).
+     *
+     * Defaults mirror the real app's Phase 5b flow: a device has been picked,
+     * and the user has pressed Submit. Tests that care about either override
+     * them by name.
+     */
+    private fun proto(
+        pin: String,
+        selected: String = "Test Mac",
+        submitted: Boolean = true,
+    ) = PairingProtocol(
+        salt = salt,
+        phoneFp = phoneFp,
+        store = store,
+        selectedMac = { selected },
+        pinSubmitted = { submitted },
+        typedPin = { pin },
+    )
 
     /** The correct proof a Mac would send for [pin]. */
     private fun proofHex(pin: String): String =
@@ -72,7 +89,14 @@ class PairingProtocolTest {
         // old proof must not verify (replay protection).
         val firstProof = proofHex("482913")
         val freshSalt = PairingCrypto.randomToken()
-        val freshProto = PairingProtocol(freshSalt, phoneFp, store) { "482913" }
+        val freshProto = PairingProtocol(
+            salt = freshSalt,
+            phoneFp = phoneFp,
+            store = store,
+            selectedMac = { "Test Mac" },
+            pinSubmitted = { true },
+            typedPin = { "482913" },
+        )
         val freshJson = JSONObject()
             .put("type", "pair")
             .put("proof", firstProof)
@@ -151,7 +175,12 @@ class PairingProtocolTest {
 
         // Now a NEW connection (fresh protocol, empty PIN on screen) authenticates.
         val authJson = JSONObject().put("type", "auth").put("token", token).toString()
-        val freshSaltProto = PairingProtocol(PairingCrypto.randomToken(), phoneFp, store) { "" }
+        val freshSaltProto = PairingProtocol(
+            salt = PairingCrypto.randomToken(),
+            phoneFp = phoneFp,
+            store = store,
+            typedPin = { "" },
+        )
         assertEquals(
             "stored token must be accepted",
             "authenticated",
@@ -169,5 +198,110 @@ class PairingProtocolTest {
     fun `malformed token hex is rejected`() {
         val authJson = JSONObject().put("type", "auth").put("token", "zz").toString()
         assertEquals("rejected", JSONObject(proto("").handle(authJson)).getString("type"))
+    }
+
+    // ---- Phase 5b: picking a device, and Submit-gated verification --------
+
+    private fun pollJson(name: String) =
+        JSONObject().put("type", "poll").put("name", name).toString()
+
+    @Test
+    fun `a poll from the selected mac is told to show a pin`() {
+        val reply = proto("").handle(pollJson("Test Mac"))
+        val obj = JSONObject(reply)
+        assertEquals("poll", obj.getString("type"))
+        assertEquals("pair", obj.getString("action"))
+    }
+
+    @Test
+    fun `a poll from any other mac is told to wait`() {
+        val reply = proto("", selected = "Test Mac").handle(pollJson("Rogue Mac"))
+        assertEquals("wait", JSONObject(reply).getString("action"))
+    }
+
+    @Test
+    fun `a poll is refused while nothing is selected`() {
+        val reply = proto("", selected = "").handle(pollJson("Test Mac"))
+        assertEquals("wait", JSONObject(reply).getString("action"))
+    }
+
+    @Test
+    fun `a poll never burns a pin attempt`() {
+        val before = store.attempts()
+        proto("").handle(pollJson("Test Mac"))
+        assertEquals("polling must be free", before, store.attempts())
+    }
+
+    @Test
+    fun `a mac the user did not pick cannot pair`() {
+        val reply = proto("482913", selected = "Test Mac")
+            .handle(pairJson(proofHex("482913"), name = "Rogue Mac"))
+        val obj = JSONObject(reply)
+        assertEquals("rejected", obj.getString("type"))
+        assertEquals("not the selected device", obj.getString("reason"))
+        assertEquals("must not burn an attempt", 0, store.attempts())
+    }
+
+    @Test
+    fun `selection is not enforced when nothing is picked`() {
+        // Keeps the manual "Pair" button on the Mac working: with no device
+        // chosen on the phone, any Mac may still pair.
+        val reply = proto("482913", selected = "").handle(pairJson(proofHex("482913")))
+        assertEquals("paired", JSONObject(reply).getString("type"))
+    }
+
+    @Test
+    fun `a pin is not checked until submit is pressed`() {
+        // The PIN is fully typed AND correct — but the user hasn't submitted.
+        val reply = proto("482913", submitted = false).handle(pairJson(proofHex("482913")))
+        val obj = JSONObject(reply)
+        assertEquals("rejected", obj.getString("type"))
+        assertEquals("no pin entered", obj.getString("reason"))
+        assertEquals("must not burn an attempt", 0, store.attempts())
+    }
+
+    @Test
+    fun `one submit costs exactly one attempt`() {
+        // REGRESSION TEST for "rejected: too many attempts" appearing before
+        // the user pressed anything. The Mac reconnects every ~1.5s; only the
+        // connections where Submit is armed may consume one of the five tries.
+        val armed = proto("000000", submitted = true)
+        assertEquals("rejected", JSONObject(armed.handle(pairJson(proofHex("482913")))).getString("type"))
+        assertEquals(1, store.attempts())
+
+        val disarmed = proto("000000", submitted = false)
+        repeat(4) { disarmed.handle(pairJson(proofHex("482913"))) }
+        assertEquals("the Mac's retries must stay free", 1, store.attempts())
+    }
+
+    @Test
+    fun `attempts remaining counts down and the lockout follows`() {
+        val pairing = PinPairing(store) { 0L }
+        assertEquals(PinPairing.MAX_ATTEMPTS, pairing.attemptsRemaining())
+
+        val attempt = proto("000000")
+        repeat(4) { attempt.handle(pairJson(proofHex("482913"))) }
+        assertEquals(1, pairing.attemptsRemaining())
+        assertEquals("not locked yet", false, pairing.isLockedOut())
+
+        val last = JSONObject(attempt.handle(pairJson(proofHex("482913"))))
+        assertEquals("locked", last.getString("type"))
+        assertEquals("locked out means zero left", 0, pairing.attemptsRemaining())
+        assertEquals(true, pairing.isLockedOut())
+    }
+
+    @Test
+    fun `a lockout survives a brand new protocol instance`() {
+        // The store is shared, so a FRESH connection still sees the lockout.
+        // This is why force-quitting the app cannot reset the counter.
+        val attempt = proto("000000")
+        repeat(PinPairing.MAX_ATTEMPTS) { attempt.handle(pairJson(proofHex("482913"))) }
+
+        val fresh = proto("482913")
+        assertEquals(
+            "a relaunch must not clear the lockout",
+            "locked",
+            JSONObject(fresh.handle(pairJson(proofHex("482913")))).getString("type"),
+        )
     }
 }
