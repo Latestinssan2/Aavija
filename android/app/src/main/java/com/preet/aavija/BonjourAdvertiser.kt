@@ -52,6 +52,7 @@ class BonjourAdvertiser(private val context: Context) {
         val lastMessage: String? = null, // what the Mac last sent us (Phase 2)
         val lastPairing: String? = null, // human-readable pairing status (3b)
         val isPaired: Boolean = false,   // has a Mac successfully paired? (3b)
+        val isWaitingForPin: Boolean = false, // a Mac is pairing; PIN not typed yet
     )
 
     private val _state = MutableStateFlow(AdState())
@@ -253,17 +254,32 @@ class BonjourAdvertiser(private val context: Context) {
         publishPairingOutcome(reply)
     }
 
-    /** Turn a protocol reply line into a status the UI can display. */
+    /**
+     * Turn a protocol reply line into a status the UI can display.
+     *
+     * A "no pin entered" rejection is NOT a real failure — it just means the
+     * Mac is pairing but nobody has typed the PIN on this phone yet. We flag
+     * that as "waiting" so the screen shows a calm hint, not a red error.
+     */
     private fun publishPairingOutcome(reply: String) {
         val obj = try { JSONObject(reply) } catch (_: Exception) { return }
         val type = obj.optString("type")
-        val (status, paired) = when (type) {
-            "paired" -> "Paired successfully" to true
-            "authenticated" -> "Mac reconnected (token accepted)" to true
-            "locked" -> "Too many wrong PINs — locked out" to false
-            "rejected" -> "Rejected: ${obj.optString("reason")}" to false
+        val reason = obj.optString("reason")
+
+        val waiting = (type == "rejected" && reason == "no pin entered")
+
+        val (status, paired) = when {
+            type == "paired" -> "Paired successfully" to true
+            type == "authenticated" -> "Mac reconnected (token accepted)" to true
+            type == "locked" -> "Too many wrong PINs — locked out" to false
+            waiting -> "A Mac is pairing — type the PIN it shows" to false
+            type == "rejected" -> "Rejected: $reason" to false
             else -> return
         }
-        _state.value = _state.value.copy(lastPairing = status, isPaired = paired)
+        _state.value = _state.value.copy(
+            lastPairing = status,
+            isPaired = paired,
+            isWaitingForPin = waiting,
+        )
     }
 }

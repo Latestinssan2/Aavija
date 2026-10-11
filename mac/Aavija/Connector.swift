@@ -49,21 +49,51 @@ final class Connector: ObservableObject {
     /// closure that can't be @MainActor — but we only ever touch it on main.
     nonisolated(unsafe) private var capturedFingerprint: String?
 
+    /// The phone we're pairing with, kept so the retry loop can reconnect.
+    /// nil when no pairing session is active.
+    private var pairingEndpoint: NWEndpoint?
+
+    /// When to give up retrying (the user needs time to read + type the PIN).
+    private var pairingDeadline: Date?
+
+    /// Pending retry reconnect, so we can cancel it on quit/unpair/success.
+    private var retryTask: Task<Void, Never>?
+
     init(store: PairingStore = PairingStore()) {
         self.store = store
         self.isPaired = store.isPaired
     }
 
-    /// Begin pairing with `endpoint`: generate a PIN, connect, run the handshake.
+    /// Begin pairing with `endpoint`: generate a PIN, show it, then keep trying
+    /// until the user types it on the phone (or we time out).
+    ///
+    /// WHY RETRIES? When you click Pair, the Mac can't know whether you've had
+    /// time to read the PIN and type it on the phone yet. So it generates the
+    /// PIN once, shows it, and reconnects every ~1.5s. Each attempt is a FRESH
+    /// secure handshake (new challenge salt, so replay-proof). The phone answers
+    /// "no pin entered" until you actually type the PIN — then the next attempt
+    /// succeeds. The PIN stays the SAME across retries so you have time to type it.
     func pair(with endpoint: NWEndpoint) {
+        retryTask?.cancel()
+        retryTask = nil
         connection?.cancel()
         connection = nil
         capturedFingerprint = nil
 
         // Fresh PIN for this attempt. Shown to the user, typed into the phone.
-        let pin = Pairing.generatePin()
-        self.pin = pin
-        self.pairingStatus = "Waiting for you to type the PIN on your phone…"
+        self.pin = Pairing.generatePin()
+        self.pairingEndpoint = endpoint
+        // Generous window: time to unlock the phone, read 6 digits, and type them.
+        self.pairingDeadline = Date().addingTimeInterval(120)
+        self.pairingStatus = "Type this PIN on your phone…"
+
+        attempt()
+    }
+
+    /// One connection + handshake attempt, reusing the EXISTING `pin`.
+    private func attempt() {
+        guard let endpoint = pairingEndpoint else { return }
+        capturedFingerprint = nil
         state = .connecting
 
         let tlsOptions = NWProtocolTLS.Options()
@@ -91,17 +121,24 @@ final class Connector: ObservableObject {
                     self?.state = .connected
                     self?.runHandshake(on: connection)
                 case .failed(let error):
+                    // Couldn't even reach the phone — surface it and stop.
                     self?.state = .failed(error.localizedDescription)
                     self?.pin = nil
+                    self?.pairingEndpoint = nil
+                    self?.retryTask?.cancel()
                     connection.cancel()
                 case .waiting(let error):
                     // .waiting = "can't reach it right now" (e.g. phone slept).
                     self?.state = .failed(error.localizedDescription)
                     self?.pin = nil
+                    self?.pairingEndpoint = nil
                 case .cancelled:
                     if self?.connection === connection {
                         self?.connection = nil
-                        self?.state = .idle
+                        // Only drop to idle if we're NOT mid-pairing-retry.
+                        if self?.pairingEndpoint == nil {
+                            self?.state = .idle
+                        }
                     }
                 default:
                     break
@@ -190,18 +227,54 @@ final class Connector: ObservableObject {
                     self.isPaired = true
                     self.pairingStatus = "Paired ✓ This Mac now trusts this phone."
                     self.pin = nil
+                    self.pairingEndpoint = nil
+                    self.retryTask?.cancel()
+                    self.retryTask = nil
 
                 case "locked":
                     self.pairingStatus = "Too many wrong PINs — try again in a few minutes."
                     self.pin = nil
+                    self.pairingEndpoint = nil
+                    self.retryTask?.cancel()
+                    self.retryTask = nil
 
                 default: // "rejected"
                     let reason = verdict.reason ?? "wrong pin"
-                    self.pairingStatus = "Rejected: \(reason)"
-                    self.pin = nil
+                    if reason == "no pin entered" {
+                        // The user hasn't typed the PIN on the phone yet —
+                        // this is EXPECTED while they're reading it. Keep
+                        // retrying rather than giving up.
+                        self.scheduleRetry()
+                    } else {
+                        self.pairingStatus = "Rejected: \(reason)"
+                        self.pin = nil
+                        self.pairingEndpoint = nil
+                        self.retryTask?.cancel()
+                        self.retryTask = nil
+                    }
                 }
                 connection.cancel()
             }
+        }
+    }
+
+    /// The phone wasn't ready (no PIN typed yet). Reconnect and try again
+    /// shortly, until the user has had time to type the PIN or we time out.
+    private func scheduleRetry() {
+        guard let deadline = pairingDeadline, Date() < deadline else {
+            pairingStatus = "Timed out waiting for the PIN. Click Pair to try again."
+            pin = nil
+            pairingEndpoint = nil
+            return
+        }
+        pairingStatus = "Type this PIN on your phone…"
+        retryTask?.cancel()
+        // Task { } inherits the MainActor from this @MainActor class, so
+        // attempt() is safe to call directly — no assumeIsolated needed.
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s between tries
+            guard !Task.isCancelled else { return }
+            self?.attempt()
         }
     }
 
@@ -241,6 +314,9 @@ final class Connector: ObservableObject {
 
     /// Forget the paired phone (so you can pair a different one).
     func unpair() {
+        retryTask?.cancel()
+        retryTask = nil
+        pairingEndpoint = nil
         store.clear()
         isPaired = false
         pairingStatus = "Unpaired. Pair again with the PIN."
@@ -248,6 +324,9 @@ final class Connector: ObservableObject {
 
     /// Clean up on quit.
     func stop() {
+        retryTask?.cancel()
+        retryTask = nil
+        pairingEndpoint = nil
         connection?.cancel()
         connection = nil
         state = .idle

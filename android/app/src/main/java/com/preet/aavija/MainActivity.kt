@@ -108,7 +108,13 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser) {
         // Phase 3b: show the result of the last pairing attempt.
         if (state.lastPairing != null) {
             Spacer(Modifier.height(12.dp))
-            val statusColor = if (state.isPaired) Color(0xFF4CAF50) else Color(0xFFF44336)
+            // Amber + "waiting" while a Mac pairs but the PIN isn't typed yet;
+            // green once paired; red only for a real rejection or lockout.
+            val statusColor = when {
+                state.isPaired -> Color(0xFF4CAF50)               // green
+                state.isWaitingForPin -> Color(0xFFFF9800)        // amber = waiting
+                else -> Color(0xFFF44336)                         // red = rejected/locked
+            }
             StatusDot(statusColor)
             Spacer(Modifier.height(4.dp))
             Text(state.lastPairing!!, fontSize = 14.sp, color = statusColor)
