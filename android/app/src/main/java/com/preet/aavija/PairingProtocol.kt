@@ -21,33 +21,32 @@ import org.json.JSONObject
  *     the man-in-the-middle defense.
  *  4. Phone replies `paired` (with a session token), `rejected`, or `locked`.
  *
+ * A Mac that already paired comes back with an `auth` message instead, proving
+ * it still holds the token that was minted for it — no PIN needed again.
+ *
  * Everything here is deliberately free of Android imports so the whole
  * decision tree is unit-testable on the JVM.
  */
 
-/** What the Mac sends after receiving a challenge. */
-data class PairRequest(val proofHex: String, val macName: String)
-
-/** What the phone decides. Maps 1:1 onto a reply line. */
-sealed class PairingDecision {
-    data class Paired(val tokenHex: String) : PairingDecision()
-    data class Rejected(val reason: String) : PairingDecision()
-    data class Locked(val retryAfterMs: Long) : PairingDecision()
-}
-
 /**
- * Turns raw lines from the wire into [PairingDecision]s. One instance per
- * pairing attempt; the caller supplies the salt up front and the PIN the user
- * typed into the phone.
+ * Turns raw lines from the wire into reply lines. One instance is created per
+ * connection (so each connection gets a FRESH salt — a captured proof is
+ * useless against a new challenge, which is our replay protection).
  *
- * @param salt        the challenge this attempt must answer (hex).
- * @param phoneFp     THIS phone's own cert fingerprint.
- * @param typedPin    the PIN currently typed on the phone screen ("" if none).
+ * @param salt      this connection's challenge (random bytes).
+ * @param phoneFp   THIS phone's own cert fingerprint.
+ * @param store     where attempts / lockout / known tokens live. Injected so
+ *                  the real app can persist it (a restart must NOT clear a
+ *                  lockout) while tests use an in-memory one.
+ * @param typedPin  reads whatever PIN is CURRENTLY on the phone screen. Called
+ *                  at verification time, not construction, so the user can
+ *                  type it while a Mac is waiting.
  */
 class PairingProtocol(
     private val salt: ByteArray,
     private val phoneFp: String,
-    private val typedPin: String,
+    private val store: PairingStore,
+    private val typedPin: () -> String,
 ) {
     companion object {
         /** Cap on inbound line size — a hostile client shouldn't be able to
@@ -83,17 +82,21 @@ class PairingProtocol(
             return reject("malformed json")
         }
 
-        // 3) It must be the message type we expect at this step.
-        if (obj.optString("type") != "pair") {
-            return reject("unexpected type")
+        // 3) It must be a message type we speak at this step.
+        return when (obj.optString("type")) {
+            "pair" -> handlePair(obj)
+            "auth" -> handleAuth(obj)
+            else -> reject("unexpected type")
         }
+    }
 
-        // 4) Required fields must exist and be the right shape.
+    /** First contact: verify the Mac knows the PIN. */
+    private fun handlePair(obj: JSONObject): String {
+        // Required fields must exist and be the right shape.
         val proofHex = obj.optString("proof")
         if (proofHex.isEmpty()) return reject("missing proof")
-        val macName = obj.optString("name").ifEmpty { "Aavija Mac" }
 
-        // 5) The proof must be valid hex of the right length (32 bytes = 64 hex).
+        // The proof must be valid hex of the right length (32 bytes = 64 hex).
         val proof = try {
             PairingCrypto.fromHex(proofHex)
         } catch (_: IllegalArgumentException) {
@@ -101,19 +104,16 @@ class PairingProtocol(
         }
         if (proof.size != 32) return reject("proof wrong length")
 
-        // 6) A PIN must actually be typed on the phone before we can check.
-        //    (The user types the PIN the Mac is showing.)
-        if (typedPin.length != 6 || typedPin.any { it !in '0'..'9' }) {
+        // A PIN must actually be typed on the phone before we can check.
+        // (The user types the PIN the Mac is showing.)
+        val pin = typedPin()
+        if (pin.length != 6 || pin.any { it !in '0'..'9' }) {
             return reject("no pin entered")
         }
 
-        // 7) All good — hand it to the security gate.
-        val result = PinPairing(
-            store = InMemoryPairingStore(), // caller swaps for a persistent one
-            nowMs = { System.currentTimeMillis() },
-        ).submitProof(proof, salt, typedPin, phoneFp)
-
-        return when (result) {
+        // All good — hand it to the security gate.
+        val pairing = PinPairing(store) { System.currentTimeMillis() }
+        return when (val result = pairing.submitProof(proof, salt, pin, phoneFp)) {
             is PinPairing.Result.Paired -> JSONObject()
                 .put("type", "paired")
                 .put("token", PairingCrypto.toHex(result.sessionToken))
@@ -128,6 +128,24 @@ class PairingProtocol(
                 .put("type", "locked")
                 .put("retryAfterMs", result.remainingMs)
                 .toString()
+        }
+    }
+
+    /** Returning visit: the Mac proves it still holds a token we minted. */
+    private fun handleAuth(obj: JSONObject): String {
+        val tokenHex = obj.optString("token")
+        if (tokenHex.isEmpty()) return reject("missing token")
+        val token = try {
+            PairingCrypto.fromHex(tokenHex)
+        } catch (_: IllegalArgumentException) {
+            return reject("token not hex")
+        }
+
+        val pairing = PinPairing(store) { System.currentTimeMillis() }
+        return if (pairing.isPairedToken(token)) {
+            JSONObject().put("type", "authenticated").toString()
+        } else {
+            reject("unknown token")
         }
     }
 

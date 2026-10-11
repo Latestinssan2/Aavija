@@ -15,8 +15,11 @@ class PairingProtocolTest {
     private val salt = PairingCrypto.randomToken() // 32 random bytes
     private val phoneFp = "cc".repeat(32)
 
-    /** Build a protocol with a given PIN typed on the phone. */
-    private fun proto(typedPin: String) = PairingProtocol(salt, phoneFp, typedPin)
+    /** A store we can inspect / share across protocol instances in one test. */
+    private val store = InMemoryPairingStore()
+
+    /** Build a protocol reading [pin] from the "screen" (fixed for tests). */
+    private fun proto(pin: String) = PairingProtocol(salt, phoneFp, store) { pin }
 
     /** The correct proof a Mac would send for [pin]. */
     private fun proofHex(pin: String): String =
@@ -61,6 +64,24 @@ class PairingProtocolTest {
         )
         val reply = proto("482913").handle(pairJson(mitmProof))
         assertEquals("rejected", JSONObject(reply).getString("type"))
+    }
+
+    @Test
+    fun `a fresh salt is used per connection so a replayed proof fails`() {
+        // Same PIN, same proof bytes — but a DIFFERENT connection's salt. The
+        // old proof must not verify (replay protection).
+        val firstProof = proofHex("482913")
+        val freshSalt = PairingCrypto.randomToken()
+        val freshProto = PairingProtocol(freshSalt, phoneFp, store) { "482913" }
+        val freshJson = JSONObject()
+            .put("type", "pair")
+            .put("proof", firstProof)
+            .toString()
+        assertEquals(
+            "replayed proof from another salt must fail",
+            "rejected",
+            JSONObject(freshProto.handle(freshJson)).getString("type"),
+        )
     }
 
     // ---- Hostile / malformed input is refused, not crashed on --------------
@@ -117,5 +138,36 @@ class PairingProtocolTest {
     fun `non-digit pin on phone is rejected`() {
         val reply = proto("abcdef").handle(pairJson(proofHex("482913")))
         assertEquals("rejected", JSONObject(reply).getString("type"))
+    }
+
+    // ---- Returning Mac (token auth) ----------------------------------------
+
+    @Test
+    fun `a minted token authenticates without the pin`() {
+        // Pair once to obtain a token.
+        val paired = JSONObject(proto("482913").handle(pairJson(proofHex("482913"))))
+        assertEquals("paired", paired.getString("type"))
+        val token = paired.getString("token")
+
+        // Now a NEW connection (fresh protocol, empty PIN on screen) authenticates.
+        val authJson = JSONObject().put("type", "auth").put("token", token).toString()
+        val freshSaltProto = PairingProtocol(PairingCrypto.randomToken(), phoneFp, store) { "" }
+        assertEquals(
+            "stored token must be accepted",
+            "authenticated",
+            JSONObject(freshSaltProto.handle(authJson)).getString("type"),
+        )
+    }
+
+    @Test
+    fun `an unknown token is rejected`() {
+        val authJson = JSONObject().put("type", "auth").put("token", "ab".repeat(32)).toString()
+        assertEquals("rejected", JSONObject(proto("").handle(authJson)).getString("type"))
+    }
+
+    @Test
+    fun `malformed token hex is rejected`() {
+        val authJson = JSONObject().put("type", "auth").put("token", "zz").toString()
+        assertEquals("rejected", JSONObject(proto("").handle(authJson)).getString("type"))
     }
 }
