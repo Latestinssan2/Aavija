@@ -42,6 +42,9 @@ targets:
         NSLocalNetworkUsageDescription: "Aavija finds and shares files with your devices on this Wi-Fi."
         NSBonjourServices:
           - _gestureshare._tcp
+          # Phase 5a: the Mac's OWN announcement, so a phone can list this
+          # machine as an available device (distinct from the phone's service).
+          - _aavija-mac._tcp
 
 schemes:
   Aavija:

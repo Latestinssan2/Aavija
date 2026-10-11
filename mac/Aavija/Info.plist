@@ -25,6 +25,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_gestureshare._tcp</string>
+		<string>_aavija-mac._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Aavija finds and shares files with your devices on this Wi-Fi.</string>

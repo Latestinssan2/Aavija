@@ -3,14 +3,17 @@ package com.preet.aavija
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -30,14 +33,16 @@ import androidx.compose.ui.unit.sp
 class MainActivity : ComponentActivity() {
 
     private lateinit var advertiser: BonjourAdvertiser
+    private lateinit var macDiscovery: MacDiscovery
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         advertiser = BonjourAdvertiser(this)
+        macDiscovery = MacDiscovery(this)
 
         setContent {
             MaterialTheme {
-                AdvertiserScreen(advertiser)
+                AdvertiserScreen(advertiser, macDiscovery)
             }
         }
     }
@@ -45,18 +50,34 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         advertiser.start()
+        macDiscovery.start() // Phase 5a: start filling the Mac list immediately
     }
 
     override fun onStop() {
+        macDiscovery.stop()
         advertiser.stop()
         super.onStop()
     }
 }
 
 @Composable
-fun AdvertiserScreen(advertiser: BonjourAdvertiser) {
+fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) {
     val state by advertiser.state.collectAsState()
     val pin by advertiser.typedPin.collectAsState()
+    val macs by macDiscovery.macs.collectAsState()
+    val focusManager = LocalFocusManager.current
+
+    // True once the user has tapped Submit with a full 6-digit PIN. It only
+    // drives the "waiting" note — the PIN itself lives in the advertiser.
+    var pinSubmitted by remember { mutableStateOf(false) }
+
+    // A real outcome from the Mac (paired / wrong PIN / locked out) replaces
+    // the waiting note, so drop it and let the status line take over.
+    LaunchedEffect(state.lastPairing, state.isPaired) {
+        if (state.isPaired || (state.lastPairing != null && !state.isWaitingForPin)) {
+            pinSubmitted = false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -87,13 +108,40 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser) {
             Text("Starting discovery…", fontSize = 18.sp)
         }
 
+        // Phase 5a: Macs this phone can see on the Wi-Fi. Display only for
+        // now — tapping/selecting a Mac and filtering on it lands in 5b.
+        Spacer(Modifier.height(24.dp))
+        Text("Available Macs", fontSize = 13.sp, color = Color.Gray)
+        Spacer(Modifier.height(6.dp))
+        if (macs.isEmpty()) {
+            Text(
+                "Searching… make sure Aavija is running on your Mac.",
+                fontSize = 14.sp,
+                color = Color.Gray,
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                macs.forEach { mac ->
+                    DeviceRow(name = mac.name)
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+        }
+
         // Phase 3b: PIN entry. Type the 6 digits the Mac is showing.
         Spacer(Modifier.height(28.dp))
         Text("Pairing PIN", fontSize = 13.sp, color = Color.Gray)
         Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = pin,
-            onValueChange = { advertiser.setPin(it) },
+            onValueChange = {
+                pinSubmitted = false // editing invalidates the confirmation
+                advertiser.setPin(it)
+            },
             modifier = Modifier.width(160.dp),
             singleLine = true,
             enabled = !state.isPaired, // no need to type once paired
@@ -104,6 +152,39 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser) {
                 letterSpacing = 6.sp,
             ),
         )
+
+        // Submit: confirm the PIN is typed. This can't push the PIN to the Mac
+        // (the phone only listens — it never dials out), so all it really does
+        // is hide the keyboard and show "waiting". The Mac is already retrying
+        // every ~1.5s and will read the PIN on its next attempt. We still want
+        // the button because tapping the field's "done" key on some keyboards
+        // just dismisses the keyboard with no visible confirmation.
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = {
+                pinSubmitted = true
+                focusManager.clearFocus() // dismisses the keyboard
+            },
+            enabled = pin.length == 6 && !state.isPaired,
+            modifier = Modifier.width(160.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF2196F3),
+                disabledContainerColor = Color(0xFFBDBDBD),
+            ),
+        ) {
+            Text("Submit", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        }
+
+        // Shown after Submit until the Mac's next retry reports back.
+        if (pinSubmitted && !state.isPaired) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "PIN entered — your Mac will check it in a moment…",
+                fontSize = 13.sp,
+                color = Color(0xFFFF9800),
+                textAlign = TextAlign.Center,
+            )
+        }
 
         // Phase 3b: show the result of the last pairing attempt.
         if (state.lastPairing != null) {
@@ -154,5 +235,56 @@ private fun StatusDot(color: Color) {
             shape = CircleShape,
             modifier = Modifier.fillMaxSize(),
         ) {}
+    }
+}
+
+/**
+ * One row in the "Available Macs" list: a laptop glyph + the Mac's real name.
+ *
+ * The NAME is genuinely read from the Mac (`Host.current().localizedName`) and
+ * broadcast over mDNS, so it's authentic. The ICON is not — and can't be.
+ * There is no protocol that returns another machine's desktop picture or file
+ * icon; mDNS carries only a name, a service type and a port. So we draw a
+ * neutral laptop in Compose instead. It scales crisply at any size and needs
+ * no bundled image asset.
+ */
+@Composable
+private fun DeviceRow(name: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LaptopIcon()
+        Spacer(Modifier.width(10.dp))
+        Text(
+            name,
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+/**
+ * A small laptop, drawn with two shapes: a screen (rounded rect) and a base
+ * (a slightly wider bar under it). Pure geometry — no bitmap, so it stays
+ * sharp at any density.
+ */
+@Composable
+private fun LaptopIcon() {
+    val tint = MaterialTheme.colorScheme.primary
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // Screen
+        Box(
+            modifier = Modifier
+                .size(width = 26.dp, height = 17.dp)
+                .background(tint, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
+        )
+        Spacer(Modifier.height(2.dp))
+        // Base / keyboard deck, a touch wider than the screen.
+        Box(
+            modifier = Modifier
+                .size(width = 32.dp, height = 3.dp)
+                .background(tint, RoundedCornerShape(bottomStart = 2.dp, bottomEnd = 2.dp)),
+        )
     }
 }

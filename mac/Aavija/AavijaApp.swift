@@ -10,6 +10,17 @@ struct AavijaApp: App {
     @StateObject private var browser = Browser()
     @StateObject private var connector = Connector()
 
+    // Phase 5a: announce this Mac on the Wi-Fi (name only — no listening
+    // socket) so the phone can list us as an available device. Not a
+    // StateObject because it publishes nothing the UI observes yet.
+    private let macAdvertiser = MacAdvertiser()
+
+    init() {
+        // Start at launch, before the panel is ever opened, so the phone's
+        // device list fills in immediately rather than after the first click.
+        macAdvertiser.start()
+    }
+
     var body: some Scene {
         // MenuBarExtra = a SwiftUI Scene that lives ONLY in the macOS menu bar.
         // The `label` closure draws the tiny menu-bar item (Gujarati text);
