@@ -35,6 +35,18 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        // BouncyCastle ships three jars (bcprov/bcutil/bcpkix) that each contain
+        // the same OSGi manifest file — Android's merger refuses duplicate paths,
+        // so drop the duplicates and keep only our own resources.
+        resources {
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            excludes += "META-INF/*.SF"
+            excludes += "META-INF/*.DSA"
+            excludes += "META-INF/*.RSA"
+        }
+    }
 }
 
 dependencies {
@@ -45,4 +57,13 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // BouncyCastle: used ONLY to mint a self-signed X.509 certificate for the
+    // TLS server (Phase 3a). We don't register it as a JCA provider — we just
+    // use its ASN.1 builders — which avoids the usual Android class conflicts.
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
+
+    // JUnit for the protocol tests (TLS handshake, header parsing, checksum,
+    // PIN lockout...). These run on the JVM, not the phone.
+    testImplementation("junit:junit:4.13.2")
 }

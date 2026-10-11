@@ -58,8 +58,10 @@ class BonjourAdvertiser(private val context: Context) {
         if (_state.value.isAdvertising) return
 
         try {
-            // 1) Open a real TCP port. Port 0 = "OS, pick any free port for me."
-            val socket = ServerSocket(0)
+            // 1) Open a TLS-encrypted TCP port (Phase 3a). Port 0 = "OS, pick
+            //    any free port." The phone is the TLS *server*, so it presents
+            //    the self-signed certificate minted in TlsIdentity.
+            val socket = TlsIdentity.createSslServerSocket()
             serverSocket = socket
             val port = socket.localPort
 
@@ -146,21 +148,27 @@ class BonjourAdvertiser(private val context: Context) {
     }
 
     /**
-     * Background thread that accepts any incoming connection and reads a
-     * single line of text from it (Phase 2 = a "hello" from the Mac). The
-     * message is stored in [AdState.lastMessage] so the UI can show it.
+     * Background thread that accepts incoming connections and reads a single
+     * line of text from each (Phase 3a = a "hello" from the Mac over TLS).
+     * The message is stored in [AdState.lastMessage] so the UI can show it.
+     *
+     * Each connection is wrapped in its OWN try/catch: with a TLS server, a
+     * random port-scanner or plaintext client will fail the handshake, and we
+     * must shrug that off and keep serving rather than dying.
      *
      * The full file-transfer protocol (length-prefixed header + raw bytes)
-     * comes in a later phase; for now we just prove the pipe is open.
+     * comes in a later phase; for now we just prove the encrypted pipe is open.
      */
     private fun startAcceptLoop(socket: ServerSocket) {
         Thread {
-            try {
-                while (!socket.isClosed) {
+            while (!socket.isClosed) {
+                try {
                     socket.accept().use { conn ->
                         Log.i(TAG, "Connection accepted from ${conn.inetAddress?.hostAddress}")
                         // Read one line (up to '\n'). This is naive — a later
                         // phase replaces it with the real framed protocol.
+                        // For TLS this first read triggers the handshake; if it
+                        // fails, we land in the catch below, not in the server.
                         val reader = conn.getInputStream().bufferedReader()
                         val line = reader.readLine()
                         if (!line.isNullOrBlank()) {
@@ -168,9 +176,13 @@ class BonjourAdvertiser(private val context: Context) {
                             _state.value = _state.value.copy(lastMessage = line)
                         }
                     }
+                } catch (e: Exception) {
+                    // Socket closed during stop() — expected, just stop looping.
+                    if (socket.isClosed) break
+                    // Otherwise: a client that failed the TLS handshake (or sent
+                    // garbage). Log it and keep accepting the next connection.
+                    Log.w(TAG, "Dropping connection: ${e.javaClass.simpleName}: ${e.message}")
                 }
-            } catch (_: Exception) {
-                // Socket closed during stop() — expected, ignore.
             }
         }.apply {
             isDaemon = true // don't block the app from exiting

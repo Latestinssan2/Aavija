@@ -1,15 +1,18 @@
 import Network
+import Security
 import SwiftUI
 
-/// Dials out to a phone and sends it a message.
+/// Dials out to a phone and sends it a message — over an ENCRYPTED (TLS)
+/// connection (Phase 3a).
 ///
 /// In our SWAPPED architecture the phone is the listener (it has the open
-/// port), so the Mac is the one that *connects*. This uses NWConnection,
-/// which we've verified works on this machine.
+/// port), so the Mac is the one that *connects*. This uses NWConnection with
+/// TLS, which we've verified works on this machine.
 ///
-/// - NWConnection: Network.framework's "client socket". You hand it an
-///   endpoint (address + port, which Bonjour gave us) and it opens a TCP
-///   connection you can then send bytes over.
+/// - NWConnection + NWProtocolTLS: Network.framework's "client socket" with an
+///   encrypted tunnel. The phone presents a self-signed certificate, so in
+///   3a we accept whatever cert it shows (encryption-only). Phase 3b replaces
+///   that blind accept with real fingerprint pinning + PIN pairing.
 @MainActor
 final class Connector: ObservableObject {
 
@@ -24,7 +27,7 @@ final class Connector: ObservableObject {
 
     private var connection: NWConnection?
 
-    /// Open a connection to `endpoint`, send `message` + newline, then close.
+    /// Open a TLS connection to `endpoint`, send `message` + newline, close.
     ///
     /// The newline matters: the phone reads one *line* (up to '\n'), so we
     /// must terminate the message or the phone would wait forever.
@@ -34,7 +37,24 @@ final class Connector: ObservableObject {
         connection = nil
         state = .connecting
 
-        let connection = NWConnection(to: endpoint, using: .tcp)
+        // Build TLS options. The verify block runs when the phone presents its
+        // certificate; for Phase 3a we accept it unconditionally so the tunnel
+        // comes up. (3b: verify the pinned fingerprint here instead.)
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_verify_block(
+            tlsOptions.securityProtocolOptions,
+            { _, _, completion in
+                // TEMPORARY (Phase 3a): trust the self-signed cert so we get
+                // encryption. Real authentication = PIN + fingerprint (3b).
+                completion(true)
+            },
+            .main
+        )
+
+        let connection = NWConnection(
+            to: endpoint,
+            using: NWParameters(tls: tlsOptions)
+        )
         connection.stateUpdateHandler = { [weak self] nwState in
             MainActor.assumeIsolated {
                 switch nwState {
@@ -64,7 +84,7 @@ final class Connector: ObservableObject {
     /// Write the message bytes (UTF-8) + a trailing newline, then close.
     private func sendPayload(_ message: String, on connection: NWConnection) {
         // + "\n" so the phone's readLine() returns instead of blocking forever.
-        var data = Data((message + "\n").utf8)
+        let data = Data((message + "\n").utf8)
         connection.send(content: data, completion: .contentProcessed { [weak self] error in
             MainActor.assumeIsolated {
                 if let error {
