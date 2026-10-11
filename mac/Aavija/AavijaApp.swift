@@ -8,13 +8,14 @@ struct AavijaApp: App {
     // Created here (not in the view) so browsing starts at launch and keeps
     // running even while the menu-bar panel is closed.
     @StateObject private var browser = Browser()
+    @StateObject private var connector = Connector()
 
     var body: some Scene {
         // MenuBarExtra = a SwiftUI Scene that lives ONLY in the macOS menu bar.
         // The `label` closure draws the tiny menu-bar item (Gujarati text);
         // the content closure is what appears when you click it.
         MenuBarExtra {
-            ContentView(browser: browser)
+            ContentView(browser: browser, connector: connector)
         } label: {
             // Text (not an image): macOS renders it sharp at any size and
             // auto-tints it white/black to match the menu bar appearance.

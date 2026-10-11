@@ -79,6 +79,15 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser) {
             Text("Starting discovery…", fontSize = 18.sp)
         }
 
+        // Phase 2: show the last message the Mac sent us, once one arrives.
+        if (state.lastMessage != null) {
+            Spacer(Modifier.height(24.dp))
+            StatusDot(Color(0xFF2196F3)) // blue = "we heard something"
+            Spacer(Modifier.height(8.dp))
+            Text("Mac says:", fontSize = 13.sp, color = Color.Gray)
+            Text(state.lastMessage!!, fontSize = 16.sp)
+        }
+
         Spacer(Modifier.height(40.dp))
         Text(
             "Open the Aavija menu on your Mac to see this phone.",

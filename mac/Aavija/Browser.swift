@@ -18,8 +18,9 @@ final class Browser: ObservableObject {
 
     /// One device the Mac has found on the network.
     struct Device: Identifiable, Equatable {
-        let id: String          // unique per service instance (name + domain)
+        let id: String          // unique per service instance (the Bonjour name)
         let name: String        // human-readable, e.g. "SM-A176B"
+        let endpoint: NWEndpoint // the full network address — needed to connect
     }
 
     @Published private(set) var devices: [Device] = []
@@ -95,7 +96,8 @@ final class Browser: ObservableObject {
         var found: [Device] = []
         for result in results {
             if case .service(let name, _, _, _) = result.endpoint {
-                found.append(Device(id: name, name: name))
+                // Keep the whole endpoint so we can dial this exact phone later.
+                found.append(Device(id: name, name: name, endpoint: result.endpoint))
             }
         }
         // Sort by name so the list doesn't jump around as results change.

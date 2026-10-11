@@ -41,6 +41,7 @@ class BonjourAdvertiser(private val context: Context) {
         val serviceName: String? = null,
         val port: Int? = null,
         val error: String? = null,
+        val lastMessage: String? = null, // what the Mac last sent us (Phase 2)
     )
 
     private val _state = MutableStateFlow(AdState())
@@ -145,15 +146,28 @@ class BonjourAdvertiser(private val context: Context) {
     }
 
     /**
-     * Background thread that accepts any incoming connection and immediately
-     * closes it. Phase 1c only needs the port to stay open; the file-transfer
-     * protocol lives in a later phase.
+     * Background thread that accepts any incoming connection and reads a
+     * single line of text from it (Phase 2 = a "hello" from the Mac). The
+     * message is stored in [AdState.lastMessage] so the UI can show it.
+     *
+     * The full file-transfer protocol (length-prefixed header + raw bytes)
+     * comes in a later phase; for now we just prove the pipe is open.
      */
     private fun startAcceptLoop(socket: ServerSocket) {
         Thread {
             try {
                 while (!socket.isClosed) {
-                    socket.accept().use { /* Phase 3 will read the transfer here */ }
+                    socket.accept().use { conn ->
+                        Log.i(TAG, "Connection accepted from ${conn.inetAddress?.hostAddress}")
+                        // Read one line (up to '\n'). This is naive — a later
+                        // phase replaces it with the real framed protocol.
+                        val reader = conn.getInputStream().bufferedReader()
+                        val line = reader.readLine()
+                        if (!line.isNullOrBlank()) {
+                            Log.i(TAG, "Received: $line")
+                            _state.value = _state.value.copy(lastMessage = line)
+                        }
+                    }
                 }
             } catch (_: Exception) {
                 // Socket closed during stop() — expected, ignore.

@@ -4,8 +4,9 @@ import SwiftUI
 // What you see when you click the menu-bar icon.
 struct ContentView: View {
     // ObservedObject = "use an object someone else owns; re-render me when
-    // its @Published values change". The app owns the Browser.
+    // its @Published values change". The app owns the Browser + Connector.
     @ObservedObject var browser: Browser
+    @ObservedObject var connector: Connector
 
     var body: some View {
         VStack(spacing: 10) {
@@ -44,17 +45,44 @@ struct ContentView: View {
             } else {
                 VStack(spacing: 6) {
                     ForEach(browser.devices) { device in
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(.green)
-                                .frame(width: 8, height: 8)
-                            Text(device.name)
-                                .font(.callout)
-                            Spacer()
+                        // Tapping a phone dials it and sends the Phase 2 hello.
+                        Button {
+                            connector.send("hello from Aavija Mac", to: device.endpoint)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(.green)
+                                    .frame(width: 8, height: 8)
+                                Text(device.name)
+                                    .font(.callout)
+                                Spacer()
+                                Text("Say hi")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 4)
                         }
-                        .padding(.horizontal, 4)
+                        .buttonStyle(.plain)
                     }
                 }
+            }
+
+            // Show the result of the last connection attempt.
+            switch connector.state {
+            case .idle:
+                EmptyView()
+            case .connecting:
+                Text("Connecting…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .connected:
+                Text("Connected ✓")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+            case .failed(let message):
+                Text("Failed: \(message)")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
             }
 
             Button("Quit Aavija") {
@@ -67,5 +95,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(browser: Browser())
+    ContentView(browser: Browser(), connector: Connector())
 }
