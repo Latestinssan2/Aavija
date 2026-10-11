@@ -66,6 +66,18 @@ class PairingProtocolTest {
     }
 
     @Test
+    fun `a successful pair remembers which mac it was`() {
+        // REGRESSION TEST for "the connection is lost after closing the app":
+        // the phone must write down WHICH Mac it paired with, because after a
+        // restart there is no live connection left to ask.
+        val mac = "Sandipkumar's MacBook Pro"
+        proto("482913", selected = mac).handle(
+            pairJson(proofHex("482913"), name = mac),
+        )
+        assertEquals(mac, store.pairedMacName())
+    }
+
+    @Test
     fun `wrong pin returns rejected`() {
         val reply = proto("482913").handle(pairJson(proofHex("000000")))
         assertEquals("rejected", JSONObject(reply).getString("type"))

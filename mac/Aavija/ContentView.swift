@@ -96,6 +96,16 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
             }
 
+            // Reopening the app must not look like the link died. The pairing
+            // survives on disk (pinned fingerprint + token), but there's no
+            // "just paired" message on a fresh launch, so say it plainly.
+            if connector.isPaired && connector.pairingStatus == nil {
+                Text("Paired ✓ This Mac trusts your phone.")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .multilineTextAlignment(.center)
+            }
+
             // Low-level connection status. While we're pairing (a PIN is on
             // screen) this line is just noise — the PIN and the status line
             // above already tell the story — so we hide it. "Connected ✓" would

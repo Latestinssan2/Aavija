@@ -47,6 +47,11 @@ and move a file. Anything marked **TBD** is decided in a later phase.
   presents**. Each app has one shared identity; never mint one certificate for
   the listening socket and a different one for hashing — the two sides would then
   disagree and every PIN would look wrong.
+- Pairing is written to disk on **both** sides (phone: the token set + the paired
+  Mac's name; Mac: pinned fingerprint + token), so closing or minimizing the app
+  never loses it. The phone re-derives "paired" from the saved token at startup
+  instead of holding it only in memory — otherwise a restart *looked* like the
+  connection had been dropped.
 - The Mac sends the same machine-name string in all three places it appears —
   mDNS instance name, `poll`, and `pair` — because the phone matches them
   against the row the user tapped. They must not drift apart.
@@ -100,3 +105,6 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 - Phase 5b: Mac discovery (`_aavija-mac._tcp`, no `resolveService`), tap-to-select
   device list, Mac polls the phone for a "show a PIN" signal, Submit-gated
   verification, persisted lockout with a live countdown, wrong-PIN vibration.
+- Fix: pairing now survives closing/minimizing the app. The phone reloads
+  "paired" from the saved token on startup and remembers the paired Mac's name;
+  the Mac shows "Paired ✓" on a fresh launch instead of looking disconnected.

@@ -158,10 +158,16 @@ class PairingProtocol(
         // All good — hand it to the security gate.
         val pairing = PinPairing(store) { System.currentTimeMillis() }
         return when (val result = pairing.submitProof(proof, salt, pin, phoneFp)) {
-            is PinPairing.Result.Paired -> JSONObject()
-                .put("type", "paired")
-                .put("token", PairingCrypto.toHex(result.sessionToken))
-                .toString()
+            is PinPairing.Result.Paired -> {
+                // Remember WHICH Mac this token is for. After the app is closed
+                // and reopened there is no live connection to ask, so this is
+                // how the screen can still name the Mac you paired with.
+                store.rememberPairedMac(sender)
+                JSONObject()
+                    .put("type", "paired")
+                    .put("token", PairingCrypto.toHex(result.sessionToken))
+                    .toString()
+            }
 
             PinPairing.Result.WrongPin -> JSONObject()
                 .put("type", "rejected")

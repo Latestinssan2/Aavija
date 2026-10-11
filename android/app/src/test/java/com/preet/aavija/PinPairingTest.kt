@@ -124,4 +124,22 @@ class PinPairingTest {
         assertTrue("stored token must be recognized", pairing.isPairedToken(token))
         assertFalse("a random token must be rejected", pairing.isPairedToken(ByteArray(32)))
     }
+
+    @Test
+    fun `hasPairedToken reports paired and survives a fresh instance`() {
+        // REGRESSION TEST for "the connection is lost after closing the app".
+        // The phone must be able to tell it is paired purely from the store, so
+        // that a restart (a brand-new PinPairing over the same store) comes back
+        // saying "paired" instead of looking like it forgot the Mac.
+        val store = InMemoryPairingStore()
+        val pairing = PinPairing(store) { 0L }
+
+        assertFalse("nothing paired yet", pairing.hasPairedToken())
+
+        pairing.submitProof(proofFor("482913"), salt, "482913", phoneFp)
+
+        assertTrue("a minted token means paired", pairing.hasPairedToken())
+        assertTrue("a relaunch over the same store still says paired",
+            PinPairing(store) { 0L }.hasPairedToken())
+    }
 }

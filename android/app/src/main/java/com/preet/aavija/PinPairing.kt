@@ -120,6 +120,13 @@ class PinPairing(
      */
     fun isPairedToken(candidate: ByteArray): Boolean =
         store.knownTokens().any { it.contentEquals(candidate) }
+
+    /**
+     * Has ANY Mac paired with us? The token set lives on disk, so this is true
+     * again straight after a restart — which is what lets the phone come back
+     * up still saying "paired" instead of looking like it forgot.
+     */
+    fun hasPairedToken(): Boolean = store.knownTokens().isNotEmpty()
 }
 
 /**
@@ -134,6 +141,10 @@ interface PairingStore {
     fun setLockedUntil(ms: Long)
     fun rememberToken(token: ByteArray)
     fun knownTokens(): List<ByteArray>
+    /** The name of the Mac we most recently paired with, or null if none. */
+    fun pairedMacName(): String?
+    /** Remember which Mac a pairing token belongs to, so the UI can name it. */
+    fun rememberPairedMac(name: String)
 }
 
 /** Pure in-memory store for unit tests — lets us simulate time passing. */
@@ -141,6 +152,7 @@ class InMemoryPairingStore : PairingStore {
     private var _attempts = 0
     private var _lockedUntil = 0L
     private val _tokens = mutableListOf<ByteArray>()
+    private var _pairedMacName: String? = null
 
     override fun attempts() = _attempts
     override fun incrementAttempts(): Int = ++_attempts
@@ -149,4 +161,6 @@ class InMemoryPairingStore : PairingStore {
     override fun setLockedUntil(ms: Long) { _lockedUntil = ms }
     override fun rememberToken(token: ByteArray) { _tokens.add(token) }
     override fun knownTokens(): List<ByteArray> = _tokens.toList()
+    override fun pairedMacName(): String? = _pairedMacName
+    override fun rememberPairedMac(name: String) { _pairedMacName = name }
 }

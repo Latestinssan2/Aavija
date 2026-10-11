@@ -51,6 +51,8 @@ class BonjourAdvertiser(private val context: Context) {
         val error: String? = null,
         val lastPairing: String? = null, // human-readable pairing status (3b)
         val isPaired: Boolean = false,   // has a Mac successfully paired? (3b)
+        /** The Mac we paired with, remembered across restarts. Null = unknown. */
+        val pairedMacName: String? = null,
         val isWaitingForPin: Boolean = false, // a Mac is pairing; PIN not typed yet
         /** The Mac the user tapped in the list. Null = nothing picked yet. */
         val selectedMac: String? = null,          // Phase 5b
@@ -154,9 +156,17 @@ class BonjourAdvertiser(private val context: Context) {
         // A force-quit must not hide a lockout — otherwise quitting the app
         // becomes a way to reset the 5-attempt limit.
         val pairing = PinPairing(pairingStore) { System.currentTimeMillis() }
+        // Pairing SURVIVES restarts — the tokens are on disk — so the screen
+        // must come back saying "paired" too. Otherwise closing or minimizing
+        // the app looked like it had forgotten the Mac: `isPaired` used to be
+        // set only by a live reply, never read back from the store.
+        val alreadyPaired = pairing.hasPairedToken()
         _state.value = _state.value.copy(
             attemptsRemaining = pairing.attemptsRemaining(),
             lockedUntilMs = pairingStore.lockedUntilMs(),
+            isPaired = alreadyPaired,
+            pairedMacName = if (alreadyPaired) pairingStore.pairedMacName() else null,
+            lastPairing = if (alreadyPaired) "Paired successfully" else null,
         )
 
         try {
@@ -382,6 +392,8 @@ class BonjourAdvertiser(private val context: Context) {
         _state.value = _state.value.copy(
             lastPairing = status,
             isPaired = paired,
+            // On success, read back the name the protocol just saved.
+            pairedMacName = if (paired) pairingStore.pairedMacName() else _state.value.pairedMacName,
             isWaitingForPin = waiting,
             attemptsRemaining = pairing.attemptsRemaining(),
             lockedUntilMs = pairingStore.lockedUntilMs(),

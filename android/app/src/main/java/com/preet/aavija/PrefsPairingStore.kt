@@ -58,9 +58,16 @@ class PrefsPairingStore(context: Context) : PairingStore {
         }
     }
 
+    override fun pairedMacName(): String? = prefs.getString(KEY_PAIRED_MAC, null)
+
+    override fun rememberPairedMac(name: String) {
+        prefs.edit().putString(KEY_PAIRED_MAC, name).apply()
+    }
+
     companion object {
         private const val KEY_ATTEMPTS = "attempts"
         private const val KEY_LOCKED_UNTIL = "locked_until_ms"
         private const val KEY_TOKENS = "paired_tokens"
+        private const val KEY_PAIRED_MAC = "paired_mac_name"
     }
 }

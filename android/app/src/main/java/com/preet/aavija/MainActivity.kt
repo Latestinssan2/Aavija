@@ -179,12 +179,16 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
 
         Spacer(Modifier.height(24.dp))
         Text(
-            if (state.isPaired)
-                "This phone is paired with your Mac."
-            else if (selectedMac != null)
-                "Tap to change device, or wait for the PIN popup."
-            else
-                "Tap a Mac above to pair with it.",
+            when {
+                state.isPaired && state.pairedMacName != null ->
+                    "This phone is paired with ${state.pairedMacName}."
+                state.isPaired ->
+                    "This phone is paired with your Mac."
+                selectedMac != null ->
+                    "Tap to change device, or wait for the PIN popup."
+                else ->
+                    "Tap a Mac above to pair with it."
+            },
             fontSize = 13.sp,
             color = Color.Gray,
             textAlign = TextAlign.Center,
