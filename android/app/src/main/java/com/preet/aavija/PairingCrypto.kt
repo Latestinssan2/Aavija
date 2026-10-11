@@ -81,4 +81,23 @@ object PairingCrypto {
         java.security.SecureRandom().nextBytes(bytes)
         return bytes
     }
+
+    /** Lowercase hex encoding. */
+    fun toHex(bytes: ByteArray): String =
+        bytes.joinToString("") { "%02x".format(it) }
+
+    /**
+     * Decode hex. Throws [IllegalArgumentException] on anything that isn't a
+     * valid, even-length hex string — callers use that to REJECT malformed
+     * input instead of passing garbage into the crypto.
+     */
+    fun fromHex(hex: String): ByteArray {
+        require(hex.length % 2 == 0) { "hex must have an even length" }
+        return ByteArray(hex.length / 2) { i ->
+            val hi = Character.digit(hex[2 * i], 16)
+            val lo = Character.digit(hex[2 * i + 1], 16)
+            require(hi != -1 && lo != -1) { "invalid hex digit" }
+            ((hi shl 4) or lo).toByte()
+        }
+    }
 }

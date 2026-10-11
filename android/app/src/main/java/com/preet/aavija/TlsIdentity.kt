@@ -33,6 +33,25 @@ import javax.net.ssl.SSLServerSocket
  */
 object TlsIdentity {
 
+    /**
+     * This phone's own certificate fingerprint (SHA-256 of the DER cert, hex).
+     * The PIN-pairing proof is bound to this value: a Mac must have seen THIS
+     * exact cert during the TLS handshake to produce a matching proof, so a
+     * man-in-the-middle showing its own cert is rejected. Computed lazily on
+     * first use and cached — the identity is minted once per app run.
+     */
+    @Volatile
+    private var cachedFingerprint: String? = null
+
+    fun fingerprint(): String {
+        cachedFingerprint?.let { return it }
+        val ks = createKeyStore()
+        val cert = ks.getCertificate("aavija") as java.security.cert.X509Certificate
+        val fp = PairingCrypto.fingerprint(cert.encoded)
+        cachedFingerprint = fp
+        return fp
+    }
+
     /** Mint a fresh keypair + self-signed cert and load them into a KeyStore. */
     private fun createKeyStore(): KeyStore {
         // 1) A 2048-bit RSA keypair (the math "lock and key").

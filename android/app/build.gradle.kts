@@ -66,4 +66,9 @@ dependencies {
     // JUnit for the protocol tests (TLS handshake, header parsing, checksum,
     // PIN lockout...). These run on the JVM, not the phone.
     testImplementation("junit:junit:4.13.2")
+
+    // Real org.json for JVM unit tests. On Android the platform provides
+    // org.json, but the unit-test stub throws "not mocked" — this artifact
+    // shadows it so the pairing protocol parser is testable off-device.
+    testImplementation("org.json:json:20240303")
 }
