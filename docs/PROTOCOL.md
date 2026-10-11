@@ -43,6 +43,10 @@ and move a file. Anything marked **TBD** is decided in a later phase.
   many attempts are left and buzzes on each wrong guess.
 - After a successful pairing, each device stores the other's **certificate
   fingerprint** (a short hash of the TLS certificate = "identity card").
+- The fingerprint must come from the **same certificate the TLS server actually
+  presents**. Each app has one shared identity; never mint one certificate for
+  the listening socket and a different one for hashing — the two sides would then
+  disagree and every PIN would look wrong.
 - The Mac sends the same machine-name string in all three places it appears —
   mDNS instance name, `poll`, and `pair` — because the phone matches them
   against the row the user tapped. They must not drift apart.
