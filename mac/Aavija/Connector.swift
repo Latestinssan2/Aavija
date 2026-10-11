@@ -268,6 +268,9 @@ final class Connector: ObservableObject {
             return
         }
         pairingStatus = "Type this PIN on your phone…"
+        // The just-cancelled connection would leave us stuck at .connected;
+        // go back to .connecting so the state doesn't lie between retries.
+        state = .connecting
         retryTask?.cancel()
         // Task { } inherits the MainActor from this @MainActor class, so
         // attempt() is safe to call directly — no assumeIsolated needed.

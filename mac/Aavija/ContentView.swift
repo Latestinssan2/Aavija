@@ -89,22 +89,29 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
             }
 
-            // Show the result of the last connection attempt.
-            switch connector.state {
-            case .idle:
-                EmptyView()
-            case .connecting:
-                Text("Connecting…")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            case .connected:
-                Text("Connected ✓")
-                    .font(.caption2)
-                    .foregroundStyle(.green)
-            case .failed(let message):
-                Text("Failed: \(message)")
-                    .font(.caption2)
-                    .foregroundStyle(.red)
+            // Low-level connection status. While we're pairing (a PIN is on
+            // screen) this line is just noise — the PIN and the status line
+            // above already tell the story — so we hide it. "Connected ✓" would
+            // be misleading anyway: it only means the wire is open, NOT that
+            // pairing succeeded. Real failures still show, because a failure
+            // clears the PIN (so we're no longer "actively pairing").
+            if connector.pin == nil {
+                switch connector.state {
+                case .idle:
+                    EmptyView()
+                case .connecting:
+                    Text("Connecting…")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                case .connected:
+                    Text("Connected ✓")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                case .failed(let message):
+                    Text("Failed: \(message)")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                }
             }
 
             if connector.isPaired {
