@@ -6,9 +6,18 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 ## 1. Discovery
 
 - Service type: `_gestureshare._tcp` (mDNS / Bonjour).
-- **Mac** advertises a service with `NWListener` + `NWBrowser` (Network.framework).
-- **Android** browses for it with `NsdManager`.
-- The browser side shows the advertiser's name in a list. That's Phase 1.
+- **Android** advertises a service with `ServerSocket` + `NsdManager` (it is the
+  listener / server side).
+- **Mac** browses for it with `NWBrowser` and connects out with `NWConnection`.
+- **Why the swap:** `NWListener` (Mac-as-server) is broken on the user's macOS
+  27 machine — it fails with `EINVAL` in every context (app, script, launchd,
+  loopback-only) while `NWBrowser`, `NWConnection`, and raw sockets all work.
+  Android's networking is unaffected, so the phone is the listener. The Mac
+  only needs to browse + dial out, both proven working. File bytes can still
+  flow either direction once a connection exists; only who opens the door
+  changed.
+- The browser side (Mac) shows the advertiser's name (the phone) in a list.
+  That's Phase 1.
 
 ## 2. Pairing (trust)
 

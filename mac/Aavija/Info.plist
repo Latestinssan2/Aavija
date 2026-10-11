@@ -22,5 +22,11 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_gestureshare._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Aavija finds and shares files with your devices on this Wi-Fi.</string>
 </dict>
 </plist>

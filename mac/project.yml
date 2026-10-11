@@ -19,7 +19,11 @@ targets:
       - path: Aavija
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.preet.aavija
+        # NOTE: was com.preet.aavija — macOS had recorded a silent Local-Network
+        # DENY for that ID (made before we added NSLocalNetworkUsageDescription,
+        # so it never prompted and never asks again). New ID = fresh start, so
+        # the app can trigger the real consent prompt.
+        PRODUCT_BUNDLE_IDENTIFIER: com.preet.aavija.mac
         PRODUCT_NAME: Aavija
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: Aavija/Info.plist
@@ -33,6 +37,11 @@ targets:
         CFBundleDisplayName: Aavija
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Local Network privacy: without these, macOS 26/27 may silently
+        # refuse Bonjour advertising instead of showing the consent prompt.
+        NSLocalNetworkUsageDescription: "Aavija finds and shares files with your devices on this Wi-Fi."
+        NSBonjourServices:
+          - _gestureshare._tcp
 
 schemes:
   Aavija:
