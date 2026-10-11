@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9F73B030AF09D953D88541 /* ContentView.swift */; };
+		3E60D9198555CCC29DEEB305 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C356DD276DA70E39BC3CFBC2 /* Pairing.swift */; };
 		753E8FE6857119FBFF5C63B4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 571CC738AB5B2F7F318FD6DF /* Assets.xcassets */; };
 		8EF875FB29B928AA4C39227F /* AavijaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F950ECC52E74D712B85ECC /* AavijaApp.swift */; };
 		EDC806FC7C701B2870BB7B88 /* Browser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DAC989855EAF1A0D3E5898 /* Browser.swift */; };
@@ -21,6 +22,7 @@
 		65F950ECC52E74D712B85ECC /* AavijaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AavijaApp.swift; sourceTree = "<group>"; };
 		74D45A020BC700586810DA43 /* Connector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Connector.swift; sourceTree = "<group>"; };
 		7654A2412D6F8CDD738A540E /* Aavija.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Aavija.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C356DD276DA70E39BC3CFBC2 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		D9DAC989855EAF1A0D3E5898 /* Browser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Browser.swift; sourceTree = "<group>"; };
 		EB9F73B030AF09D953D88541 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -52,6 +54,7 @@
 				74D45A020BC700586810DA43 /* Connector.swift */,
 				EB9F73B030AF09D953D88541 /* ContentView.swift */,
 				4E5B31A66AE1AA51448AFEE9 /* Info.plist */,
+				C356DD276DA70E39BC3CFBC2 /* Pairing.swift */,
 			);
 			path = Aavija;
 			sourceTree = "<group>";
@@ -125,6 +128,7 @@
 				EDC806FC7C701B2870BB7B88 /* Browser.swift in Sources */,
 				EE6F998F2182CBE972BEE6A0 /* Connector.swift in Sources */,
 				3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */,
+				3E60D9198555CCC29DEEB305 /* Pairing.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

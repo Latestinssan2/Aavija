@@ -45,9 +45,10 @@ struct ContentView: View {
             } else {
                 VStack(spacing: 6) {
                     ForEach(browser.devices) { device in
-                        // Tapping a phone dials it and sends the Phase 2 hello.
+                        // Tapping a phone begins PAIRING (Phase 3b): we generate
+                        // a PIN, connect over TLS, and prove we know it.
                         Button {
-                            connector.send("hello from Aavija Mac", to: device.endpoint)
+                            connector.pair(with: device.endpoint)
                         } label: {
                             HStack(spacing: 8) {
                                 Circle()
@@ -56,7 +57,7 @@ struct ContentView: View {
                                 Text(device.name)
                                     .font(.callout)
                                 Spacer()
-                                Text("Say hi")
+                                Text(connector.isPaired ? "Paired" : "Pair")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -65,6 +66,27 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+
+            // The PIN to type into the phone — big and unmissable while pairing.
+            if let pin = connector.pin {
+                VStack(spacing: 2) {
+                    Text("On your phone, enter:")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(pin)
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                        .kerning(4)
+                }
+                .padding(.vertical, 4)
+            }
+
+            // Result of the last pairing attempt (paired / rejected / locked).
+            if let status = connector.pairingStatus {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(connector.isPaired ? .green : .secondary)
+                    .multilineTextAlignment(.center)
             }
 
             // Show the result of the last connection attempt.
@@ -83,6 +105,13 @@ struct ContentView: View {
                 Text("Failed: \(message)")
                     .font(.caption2)
                     .foregroundStyle(.red)
+            }
+
+            if connector.isPaired {
+                Button("Unpair") {
+                    connector.unpair()
+                }
+                .font(.caption2)
             }
 
             Button("Quit Aavija") {
