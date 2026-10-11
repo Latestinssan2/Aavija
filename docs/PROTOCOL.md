@@ -55,7 +55,13 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 - The Mac sends the same machine-name string in all three places it appears —
   mDNS instance name, `poll`, and `pair` — because the phone matches them
   against the row the user tapped. They must not drift apart.
-- Later connections are accepted **only** if the fingerprint matches the stored one.
+- Later connections are accepted **only** if the Mac presents the **session
+  token** the phone minted at pairing — not the fingerprint. The phone mints a
+  fresh self-signed certificate each app run, so a pinned fingerprint goes
+  stale; the token lives in storage on both sides and never crosses the network
+  except inside this TLS tunnel. The fingerprint's job is narrower: it ties the
+  PIN exchange to the specific socket at pairing time, so the token can't be
+  handed to a machine-in-the-middle.
 - Unpaired devices are rejected **before any file bytes** are accepted.
 - A gesture never causes a file to be accepted from an unknown device.
 
@@ -74,18 +80,38 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 
 ## 3. Transfer
 
-- One TCP connection wrapped in **TLS** (encrypted).
-- Sender first sends a small **JSON header**:
-  `filename`, `size`, `sha256` (hash of the whole file).
-- Then raw file bytes in **1 MB chunks**.
-- Receiver computes SHA-256 while writing. If it doesn't match the header:
-  **delete the file**, report failure.
+- One TCP connection wrapped in **TLS** (encrypted). The Mac always dials (the
+  phone is the listener), so a send is a **push** from the Mac.
+- Before a single file byte, the Mac must prove it is the paired device:
+  1. Phone → Mac: `{"type":"challenge","salt":"<hex>"}` (the phone always speaks
+     first, on every connection).
+  2. Mac → Phone: `{"type":"auth","token":"<hex>"}` — the 256-bit session token
+     minted during pairing. It lives only on the two devices.
+  3. Phone → Mac: `{"type":"authenticated"}`, or
+     `{"type":"rejected","reason":"…"}` and the phone drops the connection.
+     **No file bytes are read before this.**
+- Then the sender sends a small **JSON header**:
+  `{"type":"file","filename":"a.jpg","size":1234,"sha256":"<hex>"}` + `\n`.
+- Then the raw file bytes in **1 MB chunks**. The receiver reads whatever the
+  socket actually has (up to 64 KB at a time), so a slow sender still progresses.
+- Receiver computes SHA-256 while writing. On a match it keeps the file and
+  answers `{"type":"received"}`. On a mismatch it **deletes the file** and
+  answers `{"type":"failed","reason":"hash mismatch"}`.
+- The header line and the body share **one** buffered stream, read strictly in
+  order: the line reader must stop exactly at `\n`, or it would swallow the
+  first bytes of the file.
 
 ## 4. Safety rules
 
-- Filenames containing `../`, absolute paths (`/...`), or empty names are rejected.
+- Filenames containing `../`, path separators (`/`, `\`), control characters, or
+  empty names are rejected outright (not "cleaned up").
 - Files are saved only into a dedicated folder: `Downloads/GestureShare/`.
-- Max file size: TBD (Phase 3).
+  Android 10+ writes it through **MediaStore** (no storage permission, and the
+  partial row is deleted when a transfer fails); older Android writes the plain
+  path under the storage permission.
+- Max file size: **200 MB**. The phone refuses a larger header before reading
+  any bytes; the Mac refuses to start a send that large, so the user gets a
+  clear message on either side.
 - No plaintext fallback — if TLS can't be done on a platform, we stop and
   redesign; we never silently downgrade.
 
@@ -108,3 +134,8 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 - Fix: pairing now survives closing/minimizing the app. The phone reloads
   "paired" from the saved token on startup and remembers the paired Mac's name;
   the Mac shows "Paired ✓" on a fresh launch instead of looking disconnected.
+- Phase 4a: **Mac → phone file transfer.** A "Send file to phone…" button opens
+  the Mac's file picker and pushes the file over the pairing TLS tunnel: token
+  `auth` first, then a JSON header + 1 MB chunks, SHA-256 checked as the bytes
+  land, saved to `Downloads/GestureShare` through MediaStore, and deleted if the
+  hash doesn't match. 200 MB cap. 14 new JVM tests cover the safety rules.

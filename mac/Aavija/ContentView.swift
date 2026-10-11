@@ -132,6 +132,25 @@ struct ContentView: View {
             }
 
             if connector.isPaired {
+                Button("Send file to phone…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = true
+                    panel.canChooseDirectories = false
+                    panel.allowsMultipleSelection = false
+                    panel.prompt = "Send"
+                    if panel.runModal() == .OK, let url = panel.url {
+                        connector.sendFile(at: url)
+                    }
+                }
+                .font(.caption2)
+
+                if let transfer = connector.transferStatus {
+                    Text(transfer)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
                 Button("Unpair") {
                     connector.unpair()
                 }

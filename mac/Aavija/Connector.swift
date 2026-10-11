@@ -2,6 +2,7 @@ import Foundation
 import Network
 import Security
 import SwiftUI
+import CryptoKit
 
 /// Dials out to a phone and PAIRS with it — over the encrypted (TLS) connection.
 ///
@@ -34,6 +35,12 @@ final class Connector: ObservableObject {
 
     /// Human-readable result of the last pairing attempt.
     @Published private(set) var pairingStatus: String?
+
+    /// Phase 4a: progress/result of the last file send. nil = nothing sent yet.
+    @Published private(set) var transferStatus: String?
+
+    /// Copy the file we're sending so later steps can name it in the result.
+    private var sendingName: String?
 
     /// Have we successfully paired with some phone?
     @Published private(set) var isPaired: Bool
@@ -389,7 +396,10 @@ final class Connector: ObservableObject {
                     self.pairingEndpoint = nil
                     self.retryTask?.cancel()
                     self.retryTask = nil
-                    self.stopPolling() // paired — no need to ask anything
+                    // Stop ASKING the phone whether it wants us — but KEEP the
+                    // endpoint we found, because a later file send dials the
+                    // very same phone.
+                    self.pausePolling()
 
                 case "locked":
                     self.pairingStatus = "Too many wrong PINs — try again in a few minutes."
@@ -490,6 +500,218 @@ final class Connector: ObservableObject {
         pin = nil
     }
 
+    // MARK: - Phase 4a: sending a file to the paired phone
+
+    /// The biggest file we'll send. Kept in step with the phone's
+    /// `FileTransfer.MAX_FILE_BYTES` — the phone refuses anything larger, and
+    /// failing HERE gives a clear message instead of a mid-transfer rejection.
+    private static let maxFileBytes = 200 * 1024 * 1024
+    /// Send in 1 MB chunks, exactly as the protocol doc promises.
+    private static let fileChunkBytes = 1024 * 1024
+
+    /// Send `url` to the paired phone.
+    ///
+    /// WHY THIS DIRECTION IS "PUSH": the phone is the listener, so the Mac is
+    /// always the one that dials. A send therefore reuses the same dial we use
+    /// for polling: connect, prove we hold the token (`auth`), then stream the
+    /// header + bytes. The phone keeps the file only if the SHA-256 matches.
+    func sendFile(at url: URL) {
+        guard pairingEndpoint == nil else {
+            transferStatus = "Finish pairing first."
+            return
+        }
+        guard let endpoint = pollEndpoint else {
+            transferStatus = "No phone found on the Wi-Fi yet."
+            return
+        }
+        guard let token = store.sessionToken else {
+            transferStatus = "Pair with your phone before sending."
+            return
+        }
+
+        // Read it up front so we can hash it and fail clearly on a bad path.
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            transferStatus = "Couldn't read that file: \(error.localizedDescription)"
+            return
+        }
+        guard data.count <= Self.maxFileBytes else {
+            transferStatus = "File too large (max 200 MB)."
+            return
+        }
+
+        sendingName = url.lastPathComponent
+        transferStatus = "Sending \(url.lastPathComponent)…"
+        state = .connecting
+
+        let tlsOptions = NWProtocolTLS.Options()
+        // Trust on first use: the phone's cert is self-signed and is regenerated
+        // when the app restarts, so we can't hard-pin it. Identity is proven the
+        // OTHER way here — the phone only accepts us if we send a token it minted.
+        sec_protocol_options_set_verify_block(
+            tlsOptions.securityProtocolOptions,
+            { _, _, completion in completion(true) },
+            .main
+        )
+
+        let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
+        connection.stateUpdateHandler = { [weak self] nwState in
+            MainActor.assumeIsolated {
+                switch nwState {
+                case .ready:
+                    self?.state = .connected
+                    self?.runSend(on: connection, token: token, data: data)
+                case .failed(let error):
+                    self?.state = .failed(error.localizedDescription)
+                    self?.transferStatus = "Send failed: \(error.localizedDescription)"
+                    connection.cancel()
+                case .waiting(let error):
+                    self?.state = .failed(error.localizedDescription)
+                    self?.transferStatus = "Can't reach the phone: \(error.localizedDescription)"
+                    connection.cancel()
+                case .cancelled:
+                    self?.state = .idle
+                default:
+                    break
+                }
+            }
+        }
+        connection.start(queue: .main)
+        self.connection = connection
+    }
+
+    /// Read the phone's challenge, then prove we're paired with the token.
+    private func runSend(on connection: NWConnection, token: Data, data: Data) {
+        readLine(on: connection) { [weak self] challengeLine in
+            MainActor.assumeIsolated {
+                guard let self, challengeLine != nil else {
+                    connection.cancel()
+                    return
+                }
+                guard let line = Self.encodeLine(AuthMessage(token: Pairing.hex(token))) else {
+                    self.transferStatus = "Couldn't build the auth message."
+                    connection.cancel()
+                    return
+                }
+                connection.send(content: Data((line + "\n").utf8),
+                                completion: .contentProcessed { _ in
+                    MainActor.assumeIsolated {
+                        self.readAuthVerdict(on: connection, data: data)
+                    }
+                })
+            }
+        }
+    }
+
+    /// The phone answers `authenticated` (we may send) or `rejected` (we may not).
+    private func readAuthVerdict(on connection: NWConnection, data: Data) {
+        readLine(on: connection) { [weak self] line in
+            MainActor.assumeIsolated {
+                guard let self else {
+                    connection.cancel()
+                    return
+                }
+                guard let line, let obj = Self.decodeObject(line) else {
+                    self.transferStatus = "Phone sent a bad reply."
+                    connection.cancel()
+                    return
+                }
+                let type = obj["type"] as? String ?? ""
+                guard type == "authenticated" else {
+                    let reason = obj["reason"] as? String ?? type
+                    self.transferStatus = "Phone refused: \(reason)"
+                    connection.cancel()
+                    return
+                }
+                self.sendBody(data: data, on: connection)
+            }
+        }
+    }
+
+    /// Send the header line (name, size, hash) then the bytes themselves.
+    private func sendBody(data: Data, on connection: NWConnection) {
+        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let header = FileHeader(
+            filename: sendingName ?? "file",
+            size: data.count,
+            sha256: sha
+        )
+        guard let line = Self.encodeLine(header) else {
+            transferStatus = "Couldn't build the file header."
+            connection.cancel()
+            return
+        }
+        connection.send(content: Data((line + "\n").utf8),
+                        completion: .contentProcessed { [weak self] error in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let error {
+                    self.transferStatus = "Send failed: \(error.localizedDescription)"
+                    connection.cancel()
+                    return
+                }
+                self.sendChunks(data, from: 0, on: connection)
+            }
+        })
+    }
+
+    /// Stream the body in 1 MB chunks. NWConnection doesn't need us to wait for
+    /// an ack, but sending one chunk at a time keeps memory flat and lets an
+    /// error stop the loop cleanly.
+    private func sendChunks(_ data: Data, from offset: Int, on connection: NWConnection) {
+        if offset >= data.count {
+            readTransferResult(on: connection)
+            return
+        }
+        let end = min(offset + Self.fileChunkBytes, data.count)
+        let chunk = data.subdata(in: offset..<end)
+        connection.send(content: chunk, completion: .contentProcessed { [weak self] error in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let error {
+                    self.transferStatus = "Send failed: \(error.localizedDescription)"
+                    connection.cancel()
+                    return
+                }
+                self.sendChunks(data, from: end, on: connection)
+            }
+        })
+    }
+
+    /// `received` = kept on the phone; `failed` = it checked the hash and deleted it.
+    private func readTransferResult(on connection: NWConnection) {
+        readLine(on: connection) { [weak self] line in
+            MainActor.assumeIsolated {
+                defer { connection.cancel() }
+                guard let self else { return }
+                guard let line, let obj = Self.decodeObject(line) else {
+                    self.transferStatus = "Phone sent no result."
+                    return
+                }
+                switch obj["type"] as? String ?? "" {
+                case "received":
+                    self.transferStatus = "Sent \(self.sendingName ?? "file") ✓"
+                case "failed":
+                    let reason = obj["reason"] as? String ?? "unknown"
+                    self.transferStatus = "Phone deleted the file: \(reason)"
+                default:
+                    self.transferStatus = "Unexpected reply from the phone."
+                }
+            }
+        }
+    }
+
+    private static func encodeLine<T: Encodable>(_ value: T) -> String? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func decodeObject(_ line: String) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
+    }
+
     /// Forget the paired phone (so you can pair a different one).
     func unpair() {
         retryTask?.cancel()
@@ -557,4 +779,19 @@ private struct PairResponse: Decodable {
     let token: String?
     let reason: String?
     let retryAfterMs: Double?
+}
+
+/// Phase 4a: prove we still hold the token the phone minted for us.
+private struct AuthMessage: Encodable {
+    let type = "auth"
+    let token: String
+}
+
+/// Phase 4a: the file's name, byte count, and SHA-256 (hex), sent as one line
+/// immediately before the raw bytes.
+private struct FileHeader: Encodable {
+    let type = "file"
+    let filename: String
+    let size: Int
+    let sha256: String
 }

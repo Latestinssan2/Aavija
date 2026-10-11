@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.net.ServerSocket
 
 /**
@@ -68,6 +70,12 @@ class BonjourAdvertiser(private val context: Context) {
          * it off the screen before you've read it.
          */
         val lastRejection: String? = null,        // Phase 5b
+        /** Phase 4a: last file received (or why it failed). Null = none yet. */
+        val transferStatus: String? = null,
+        /** Phase 4a: a file is being received right now. */
+        val isReceiving: Boolean = false,
+        /** Phase 4a: the last transfer FAILED (so the UI can show red). */
+        val transferFailed: Boolean = false,
     )
 
     private val _state = MutableStateFlow(AdState())
@@ -296,8 +304,12 @@ class BonjourAdvertiser(private val context: Context) {
      * returns — pairing is its own short-lived exchange.
      */
     private fun handlePairingConnection(conn: java.net.Socket) {
-        val reader = conn.getInputStream().bufferedReader()
-        val writer = conn.getOutputStream().bufferedWriter()
+        // Buffered ONCE, and the same buffer carries both the text lines and the
+        // raw file bytes. A second reader (say, a BufferedReader) would happily
+        // swallow the first bytes of the file while hunting for its newline —
+        // one buffer, read strictly in order, is what keeps the payload intact.
+        val input = BufferedInputStream(conn.getInputStream())
+        val output = BufferedOutputStream(conn.getOutputStream())
 
         // A FRESH salt every connection = replay protection: a proof captured
         // on one attempt is useless against the next challenge.
@@ -312,13 +324,14 @@ class BonjourAdvertiser(private val context: Context) {
         )
 
         // 1) Send the challenge so the Mac can build its proof.
-        writer.write(protocol.challengeLine() + "\n")
-        writer.flush()
+        FileTransfer.writeLine(output, protocol.challengeLine())
 
-        // 2) Read the Mac's answer. Two shapes are normal here:
+        // 2) Read the Mac's first message. Three shapes are normal here:
         //      "poll" — the Mac asking "did the user tap my name?" (Phase 5b)
-        //      "pair" / "auth" — an actual pairing attempt
-        val line = reader.readLine()
+        //      "pair" — a first-time pairing attempt
+        //      "auth" — an already-paired Mac proving it holds a token, which is
+        //               also how every FILE TRANSFER begins (Phase 4a)
+        val line = FileTransfer.readLine(input)
         if (line.isNullOrBlank()) {
             Log.w(TAG, "Connection sent no pairing message")
             return
@@ -327,13 +340,110 @@ class BonjourAdvertiser(private val context: Context) {
 
         // 3) Verify and reply.
         val reply = protocol.handle(line)
-        writer.write(reply + "\n")
-        writer.flush()
+        FileTransfer.writeLine(output, reply)
         Log.i(TAG, "Pairing reply: $reply")
 
         // 4) Publish the outcome so the phone's screen can show it.
         publishPairingOutcome(reply)
+
+        // 5) A Mac that JUST authenticated is trusted — it may follow with a
+        //    file. An unknown token never gets this far, so file bytes are
+        //    refused for unpaired devices by construction.
+        if (isAuthenticated(reply)) {
+            receiveFile(input, output)
+        }
     }
+
+    private fun isAuthenticated(reply: String): Boolean = try {
+        JSONObject(reply).optString("type") == "authenticated"
+    } catch (_: Exception) {
+        false
+    }
+
+    /** A file header is on the wire; check it, then stream the body. */
+    private fun receiveFile(input: BufferedInputStream, output: BufferedOutputStream) {
+        val headerLine = FileTransfer.readLine(input)
+        if (headerLine.isNullOrBlank()) {
+            Log.w(TAG, "Authenticated Mac sent no file header")
+            return
+        }
+        Log.i(TAG, "File header: $headerLine")
+
+        when (val parsed = FileTransfer.parseHeader(headerLine)) {
+            is FileTransfer.HeaderResult.Bad -> {
+                Log.w(TAG, "Refused file: ${parsed.reason}")
+                runCatching { FileTransfer.writeLine(output, failure(parsed.reason)) }
+                _state.value = _state.value.copy(
+                    isReceiving = false,
+                    transferFailed = true,
+                    transferStatus = "Refused a file: ${parsed.reason}",
+                )
+            }
+            is FileTransfer.HeaderResult.Ok -> storeFile(input, output, parsed.header)
+        }
+    }
+
+    /** Stream the body into Downloads/GestureShare, keeping it only on a hash match. */
+    private fun storeFile(
+        input: BufferedInputStream,
+        output: BufferedOutputStream,
+        header: FileTransfer.Header,
+    ) {
+        _state.value = _state.value.copy(
+            isReceiving = true,
+            transferFailed = false,
+            transferStatus = "Receiving ${header.filename}…",
+        )
+
+        val sink = try {
+            ReceivedFiles.open(context, header.filename)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not create the destination file", e)
+            runCatching { FileTransfer.writeLine(output, failure("cannot write to Downloads")) }
+            _state.value = _state.value.copy(
+                isReceiving = false,
+                transferFailed = true,
+                transferStatus = "Could not save ${header.filename}",
+            )
+            return
+        }
+
+        try {
+            val got = FileTransfer.receive(input, sink.output, header.size)
+            if (got == header.sha256Hex) {
+                sink.commit()
+                Log.i(TAG, "File received OK: ${header.filename} (${header.size} bytes)")
+                runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "received").toString()) }
+                _state.value = _state.value.copy(
+                    isReceiving = false,
+                    transferFailed = false,
+                    transferStatus = "Saved ${header.filename} to ${ReceivedFiles.DISPLAY_FOLDER}",
+                )
+            } else {
+                // Never leave a tampered / truncated file where it can be opened.
+                sink.abort()
+                Log.w(TAG, "Hash mismatch for ${header.filename} — deleted")
+                runCatching { FileTransfer.writeLine(output, failure("hash mismatch")) }
+                _state.value = _state.value.copy(
+                    isReceiving = false,
+                    transferFailed = true,
+                    transferStatus = "Deleted ${header.filename}: hash mismatch",
+                )
+            }
+        } catch (e: Exception) {
+            sink.abort()
+            Log.e(TAG, "File receive failed", e)
+            runCatching { FileTransfer.writeLine(output, failure(e.message ?: "transfer failed")) }
+            _state.value = _state.value.copy(
+                isReceiving = false,
+                transferFailed = true,
+                transferStatus = "Transfer failed: ${e.message ?: "unknown error"}",
+            )
+        }
+    }
+
+    private fun failure(reason: String): String =
+        JSONObject().put("type", "failed").put("reason", reason).toString()
 
     /**
      * Turn a protocol reply line into a status the UI can display.

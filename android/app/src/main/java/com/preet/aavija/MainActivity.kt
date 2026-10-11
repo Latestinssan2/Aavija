@@ -49,11 +49,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         advertiser = BonjourAdvertiser(this)
         macDiscovery = MacDiscovery(this)
+        requestLegacyStoragePermissionIfNeeded()
 
         setContent {
             MaterialTheme {
                 AdvertiserScreen(advertiser, macDiscovery)
             }
+        }
+    }
+
+    /**
+     * On Android 9 and older, saving a received file into the public Downloads
+     * folder needs WRITE_EXTERNAL_STORAGE. Android 10+ goes through MediaStore
+     * and needs no permission — and the permission isn't even declared on those
+     * versions (maxSdkVersion=28), so we only ever ask on the old ones.
+     */
+    private fun requestLegacyStoragePermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return
+        val granted = checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            requestPermissions(arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE), 1001)
         }
     }
 
@@ -175,6 +191,24 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
             StatusDot(statusColor)
             Spacer(Modifier.height(4.dp))
             Text(state.lastPairing!!, fontSize = 14.sp, color = statusColor)
+        }
+
+        // Phase 4a: a file arriving (or the result of the last one).
+        if (state.transferStatus != null) {
+            Spacer(Modifier.height(16.dp))
+            val transferColor = when {
+                state.isReceiving -> Color(0xFFFF9800)     // amber = in progress
+                state.transferFailed -> Color(0xFFF44336)  // red = failed/deleted
+                else -> Color(0xFF4CAF50)                  // green = saved
+            }
+            StatusDot(transferColor)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                state.transferStatus!!,
+                fontSize = 14.sp,
+                color = transferColor,
+                textAlign = TextAlign.Center,
+            )
         }
 
         Spacer(Modifier.height(24.dp))

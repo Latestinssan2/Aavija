@@ -9,6 +9,12 @@
     <!-- CHANGE_WIFI_MULTICAST_STATE: mDNS (Bonjour) uses multicast; Android
          blocks multicast reception unless we hold a MulticastLock. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- WRITE_EXTERNAL_STORAGE: only for Android 9 and older, where saving a
+         received file into the public Downloads folder needs it. Android 10+
+         goes through MediaStore instead and needs no permission. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:label="Aavija"
