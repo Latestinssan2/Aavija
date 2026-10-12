@@ -45,6 +45,19 @@ final class Connector: ObservableObject {
     /// Have we successfully paired with some phone?
     @Published private(set) var isPaired: Bool
 
+    /// Is the paired phone ACTUALLY reachable right now?
+    ///
+    /// A stored pairing is trust, not a live link — the two are easy to confuse
+    /// and doing so is exactly the bug this exists to fix. `isReachable` comes
+    /// from a real ping/pong round-trip, so with the phone's Wi-Fi off this goes
+    /// false within a few seconds and the panel can say "Disconnected" instead
+    /// of parroting "Paired ✓" at a phone that isn't there.
+    @Published private(set) var isReachable = false
+
+    /// The paired phone's name (from the store), so the panel can name it even
+    /// while it's offline.
+    @Published private(set) var pairedPhoneName: String?
+
     /// Where the pinned fingerprint + session token live (survives relaunch).
     private let store: PairingStore
 
@@ -90,9 +103,23 @@ final class Connector: ObservableObject {
         pollEndpoint = endpoint
         if endpoint == nil {
             pausePolling()
+            // The phone vanished from mDNS. If we're paired, that's a
+            // disconnection we should show at once, not 3 seconds from now.
+            if isPaired { isReachable = false }
             return
         }
-        resumePolling()
+        if isPaired {
+            // Remember the name as we SEE it. This covers pairings made before
+            // we started storing the name, and picks up a rename of the phone.
+            if case let .service(name, _, _, _) = endpoint, pairedPhoneName != name {
+                pairedPhoneName = name
+                store.pairedPhoneName = name
+            }
+            // Paired: the phone reappearing is a chance to confirm the link.
+            startHeartbeat()
+        } else {
+            resumePolling()
+        }
     }
 
     /// Ask again shortly — unless we're busy pairing, paired, or already have
@@ -217,9 +244,148 @@ final class Connector: ObservableObject {
         }
     }
 
+    // MARK: - Is the paired phone actually there? (heartbeat)
+
+    /// How often to check the link, and how long to wait for an answer.
+    private static let heartbeatEvery: UInt64 = 3_000_000_000
+    private static let heartbeatTimeout: UInt64 = 4_000_000_000
+
+    private var heartbeatTask: Task<Void, Never>?
+    private var heartbeatConnection: NWConnection?
+
+    /// Start (or keep) the reachability loop. Safe to call repeatedly.
+    private func startHeartbeat() {
+        guard isPaired else { return }
+        if heartbeatTask != nil || heartbeatConnection != nil { return }
+        heartbeatOnce() // check NOW rather than after the first interval
+    }
+
+    private func scheduleNextHeartbeat() {
+        guard isPaired else { return }
+        heartbeatTask?.cancel()
+        heartbeatTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.heartbeatEvery)
+            guard !Task.isCancelled else { return }
+            self?.heartbeatTask = nil
+            self?.heartbeatOnce()
+        }
+    }
+
+    /// Stop the loop and forget the verdict (on unpair / quit / while pairing).
+    private func stopHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        heartbeatConnection?.cancel()
+        heartbeatConnection = nil
+        isReachable = false
+    }
+
+    /// One check: dial the phone, send `ping`, expect `pong`.
+    private func heartbeatOnce() {
+        guard isPaired, pairingEndpoint == nil else { return }
+        guard let endpoint = pollEndpoint else {
+            // We can't even see the phone on the Wi-Fi. Keep ticking so we
+            // recover the moment it reappears.
+            isReachable = false
+            scheduleNextHeartbeat()
+            return
+        }
+
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_verify_block(
+            tlsOptions.securityProtocolOptions,
+            { _, _, completion in completion(true) },
+            .main
+        )
+
+        let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
+        heartbeatConnection = connection
+
+        // A watchdog, because a peer that never answers would otherwise leave
+        // this attempt hanging forever and the status stuck on "connected".
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.heartbeatTimeout)
+            guard let self, self.heartbeatConnection === connection else { return }
+            connection.cancel()
+            self.heartbeatConnection = nil
+            self.isReachable = false
+            self.scheduleNextHeartbeat()
+        }
+
+        connection.stateUpdateHandler = { [weak self] nwState in
+            MainActor.assumeIsolated {
+                switch nwState {
+                case .ready:
+                    self?.runHeartbeat(on: connection)
+                case .failed, .waiting:
+                    // Can't reach the phone right now.
+                    self?.finishHeartbeat(connection, reachable: false)
+                case .cancelled:
+                    break
+                default:
+                    break
+                }
+            }
+        }
+        connection.start(queue: .main)
+    }
+
+    /// Read the challenge the phone always sends first, then ask our question.
+    private func runHeartbeat(on connection: NWConnection) {
+        readLine(on: connection) { [weak self] challengeLine in
+            MainActor.assumeIsolated {
+                guard let self, challengeLine != nil else {
+                    self?.finishHeartbeat(connection, reachable: false)
+                    return
+                }
+                guard let line = Self.encodeLine(PingMessage()) else {
+                    self.finishHeartbeat(connection, reachable: false)
+                    return
+                }
+                connection.send(content: Data((line + "\n").utf8),
+                                completion: .contentProcessed { _ in
+                    MainActor.assumeIsolated {
+                        self.readHeartbeat(on: connection)
+                    }
+                })
+            }
+        }
+    }
+
+    /// A `pong` means the phone is there and speaking our protocol.
+    private func readHeartbeat(on connection: NWConnection) {
+        readLine(on: connection) { [weak self] line in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let ok: Bool
+                if let line, let obj = Self.decodeObject(line) {
+                    ok = (obj["type"] as? String) == "pong"
+                } else {
+                    ok = false
+                }
+                self.finishHeartbeat(connection, reachable: ok)
+            }
+        }
+    }
+
+    /// One attempt is over. Whoever gets here first (the answer or the
+    /// watchdog) clears `heartbeatConnection`, so the other one stands down and
+    /// we never schedule two loops.
+    private func finishHeartbeat(_ connection: NWConnection, reachable: Bool) {
+        guard heartbeatConnection === connection else { return }
+        heartbeatConnection = nil
+        connection.cancel()
+        isReachable = reachable
+        scheduleNextHeartbeat()
+    }
+
     init(store: PairingStore = PairingStore()) {
         self.store = store
         self.isPaired = store.isPaired
+        self.pairedPhoneName = store.pairedPhoneName
+        // If we're already paired, start checking the link right away — a fresh
+        // launch must not sit on a stale "connected" (or a stale "disconnected").
+        if isPaired { heartbeatOnce() }
     }
 
     /// Begin pairing with `endpoint`: generate a PIN, show it, then keep trying
@@ -237,8 +403,10 @@ final class Connector: ObservableObject {
         connection?.cancel()
         connection = nil
         capturedFingerprint = nil
-        // We're pairing with THIS phone now, so stop asking it questions.
+        // We're pairing with THIS phone now, so stop asking it questions —
+        // and stop the reachability loop while the pairing session is live.
         pausePolling()
+        stopHeartbeat()
         // Fresh session: any "wrong PIN" warning from a previous one is stale.
         hasSeenWrongPin = false
 
@@ -390,16 +558,26 @@ final class Connector: ObservableObject {
                         self.store.sessionToken = token
                     }
                     self.store.pinnedFingerprint = self.capturedFingerprint
+                    // Remember WHICH phone this was, so the panel can name it
+                    // later even when the phone is offline.
+                    if case let .service(name, _, _, _) = self.pairingEndpoint {
+                        self.store.pairedPhoneName = name
+                        self.pairedPhoneName = name
+                    }
                     self.isPaired = true
-                    self.pairingStatus = "Paired ✓ This Mac now trusts this phone."
+                    // We just completed a live exchange with this phone, so it
+                    // is reachable RIGHT NOW — start honest from the truth and
+                    // let the heartbeat correct it if the link drops.
+                    self.isReachable = true
+                    // No lingering "paired" banner: the live line below the PIN
+                    // area is the single source of truth for the link state.
+                    self.pairingStatus = nil
                     self.pin = nil
                     self.pairingEndpoint = nil
                     self.retryTask?.cancel()
                     self.retryTask = nil
-                    // Stop ASKING the phone whether it wants us — but KEEP the
-                    // endpoint we found, because a later file send dials the
-                    // very same phone.
                     self.pausePolling()
+                    self.startHeartbeat()
 
                 case "locked":
                     self.pairingStatus = "Too many wrong PINs — try again in a few minutes."
@@ -520,30 +698,51 @@ final class Connector: ObservableObject {
             transferStatus = "Finish pairing first."
             return
         }
-        guard let endpoint = pollEndpoint else {
-            transferStatus = "No phone found on the Wi-Fi yet."
+        guard pollEndpoint != nil else {
+            transferStatus = "No phone found on the Wi-Fi yet — is its Wi-Fi on?"
             return
         }
-        guard let token = store.sessionToken else {
+        guard store.sessionToken != nil else {
             transferStatus = "Pair with your phone before sending."
             return
         }
 
-        // Read it up front so we can hash it and fail clearly on a bad path.
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            transferStatus = "Couldn't read that file: \(error.localizedDescription)"
-            return
+        // Read + hash the file OFF the main thread. THIS is the beachball fix:
+        // `Data(contentsOf:)` was running on the main actor and froze the whole
+        // menu-bar app while a big file loaded. Now the panel stays responsive.
+        transferStatus = "Reading \(url.lastPathComponent)…"
+        Task.detached(priority: .userInitiated) { [weak self] in
+            // Sandboxed app: a file the user just picked needs its SECURITY
+            // SCOPE open before we may read it. (No-op if not sandboxed.)
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let result = Result { try Data(contentsOf: url) }
+            await MainActor.run {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    self.beginSend(data: data, name: url.lastPathComponent)
+                case .failure(let error):
+                    self.transferStatus = "Couldn't read that file: \(error.localizedDescription)"
+                }
+            }
         }
+    }
+
+    /// The file is in memory; dial the phone and push it.
+    private func beginSend(data: Data, name: String) {
         guard data.count <= Self.maxFileBytes else {
             transferStatus = "File too large (max 200 MB)."
             return
         }
+        // Re-read the endpoint/token here: time passed while the file loaded.
+        guard let endpoint = pollEndpoint, let token = store.sessionToken else {
+            transferStatus = "The phone isn't available right now."
+            return
+        }
 
-        sendingName = url.lastPathComponent
-        transferStatus = "Sending \(url.lastPathComponent)…"
+        sendingName = name
+        transferStatus = "Sending \(name)…"
         state = .connecting
 
         let tlsOptions = NWProtocolTLS.Options()
@@ -566,10 +765,12 @@ final class Connector: ObservableObject {
                 case .failed(let error):
                     self?.state = .failed(error.localizedDescription)
                     self?.transferStatus = "Send failed: \(error.localizedDescription)"
+                    self?.isReachable = false
                     connection.cancel()
                 case .waiting(let error):
                     self?.state = .failed(error.localizedDescription)
                     self?.transferStatus = "Can't reach the phone: \(error.localizedDescription)"
+                    self?.isReachable = false
                     connection.cancel()
                 case .cancelled:
                     self?.state = .idle
@@ -717,8 +918,10 @@ final class Connector: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         pairingEndpoint = nil
+        stopHeartbeat()
         store.clear()
         isPaired = false
+        pairedPhoneName = nil
         pairingStatus = "Unpaired. Tap this Mac on your phone to pair again."
         resumePolling() // unpaired again — go back to listening for a tap
     }
@@ -728,6 +931,7 @@ final class Connector: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         pairingEndpoint = nil
+        stopHeartbeat()
         stopPolling()
         connection?.cancel()
         connection = nil
@@ -785,6 +989,12 @@ private struct PairResponse: Decodable {
 private struct AuthMessage: Encodable {
     let type = "auth"
     let token: String
+}
+
+/// A liveness check. The phone answers `pong`; nothing changes on either side.
+/// This is what lets the panel say "Disconnected" honestly.
+private struct PingMessage: Encodable {
+    let type = "ping"
 }
 
 /// Phase 4a: the file's name, byte count, and SHA-256 (hex), sent as one line

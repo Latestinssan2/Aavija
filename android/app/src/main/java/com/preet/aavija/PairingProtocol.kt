@@ -93,12 +93,25 @@ class PairingProtocol(
 
         // 3) It must be a message type we speak at this step.
         return when (obj.optString("type")) {
+            "ping" -> handlePing()
             "poll" -> handlePoll(obj)
             "pair" -> handlePair(obj)
             "auth" -> handleAuth(obj)
             else -> reject("unexpected type")
         }
     }
+
+    /**
+     * A HEARTBEAT: the Mac checking that the link is alive (bugfix after Phase 4a).
+     *
+     * It carries no data, verifies nothing, changes no state, and burns no
+     * attempt — it exists purely so the Mac can tell "connected" from
+     * "disconnected" honestly. Without it the Mac showed "Paired ✓" forever,
+     * even with the phone's Wi-Fi off, because a remembered pairing is trust,
+     * not a live connection.
+     */
+    private fun handlePing(): String =
+        JSONObject().put("type", "pong").toString()
 
     /**
      * "Did the user tap MY name on the phone?" — the Mac asking (Phase 5b).

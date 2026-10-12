@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // What you see when you click the menu-bar icon.
 struct ContentView: View {
@@ -7,6 +8,14 @@ struct ContentView: View {
     // its @Published values change". The app owns the Browser + Connector.
     @ObservedObject var browser: Browser
     @ObservedObject var connector: Connector
+
+    /// Phase 4a: flip to true to open the file picker.
+    ///
+    /// We use SwiftUI's .fileImporter (asynchronous) rather than
+    /// `NSOpenPanel.runModal()`. This app is a sandboxed menu-bar agent
+    /// (LSUIElement), and running a modal panel synchronously on the main
+    /// thread hangs the whole app — the beachball the first version produced.
+    @State private var isChoosingFile = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -96,14 +105,24 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
             }
 
-            // Reopening the app must not look like the link died. The pairing
-            // survives on disk (pinned fingerprint + token), but there's no
-            // "just paired" message on a fresh launch, so say it plainly.
-            if connector.isPaired && connector.pairingStatus == nil {
-                Text("Paired ✓ This Mac trusts your phone.")
-                    .font(.caption2)
-                    .foregroundStyle(.green)
-                    .multilineTextAlignment(.center)
+            // "Paired" is about TRUST (a record on disk, both sides); this line
+            // is about the LINK right now. The two are easy to confuse and the
+            // old UI did exactly that: it showed "Paired ✓" even with the
+            // phone's Wi-Fi off. Now a heartbeat decides, and we name the phone.
+            if connector.isPaired {
+                let name = connector.pairedPhoneName ?? "your phone"
+                let reachable = connector.isReachable
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(reachable ? .green : .orange)
+                        .frame(width: 8, height: 8)
+                    Text(reachable
+                         ? "Connected to \(name)"
+                         : "Disconnected — \(name) isn't reachable")
+                        .font(.caption2)
+                        .foregroundStyle(reachable ? .green : .orange)
+                        .multilineTextAlignment(.center)
+                }
             }
 
             // Low-level connection status. While we're pairing (a PIN is on
@@ -133,14 +152,7 @@ struct ContentView: View {
 
             if connector.isPaired {
                 Button("Send file to phone…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = true
-                    panel.canChooseDirectories = false
-                    panel.allowsMultipleSelection = false
-                    panel.prompt = "Send"
-                    if panel.runModal() == .OK, let url = panel.url {
-                        connector.sendFile(at: url)
-                    }
+                    isChoosingFile = true
                 }
                 .font(.caption2)
 
@@ -163,6 +175,18 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(width: 240)
+        // The async file picker. Picking a file hands its URL to the connector,
+        // which opens a security scope before reading it (the sandbox forbids
+        // reading a user file without one).
+        .fileImporter(
+            isPresented: $isChoosingFile,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                connector.sendFile(at: url)
+            }
+        }
     }
 }
 

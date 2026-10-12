@@ -138,6 +138,7 @@ final class PairingStore {
     private let defaults: UserDefaults
     private let fpKey = "aavija.pinnedFingerprint"
     private let tokenKey = "aavija.sessionToken"
+    private let nameKey = "aavija.pairedPhoneName"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -155,6 +156,13 @@ final class PairingStore {
         set { defaults.set(newValue, forKey: tokenKey) }
     }
 
+    /// The paired phone's Bonjour (mDNS) name, so the panel can NAME it even
+    /// when the phone is offline and there's nothing to match against.
+    var pairedPhoneName: String? {
+        get { defaults.string(forKey: nameKey) }
+        set { defaults.set(newValue, forKey: nameKey) }
+    }
+
     var isPaired: Bool {
         pinnedFingerprint != nil && sessionToken != nil
     }
@@ -162,5 +170,6 @@ final class PairingStore {
     func clear() {
         pinnedFingerprint = nil
         sessionToken = nil
+        pairedPhoneName = nil
     }
 }

@@ -145,6 +145,23 @@ class PairingProtocolTest {
     }
 
     @Test
+    fun `a ping is answered pong and changes nothing`() {
+        // The heartbeat: proves the link is alive without touching pairing state.
+        val p = proto("482913")
+        val reply = p.handle(JSONObject().put("type", "ping").toString())
+        assertEquals("pong", JSONObject(reply).getString("type"))
+    }
+
+    @Test
+    fun `a ping burns no pin attempt`() {
+        val p = proto("482913")
+        repeat(20) { p.handle(JSONObject().put("type", "ping").toString()) }
+        // Still able to pair with the right PIN afterwards.
+        val paired = JSONObject(p.handle(pairJson(proofHex("482913")))).getString("type")
+        assertEquals("paired", paired)
+    }
+
+    @Test
     fun `missing proof field is rejected`() {
         val noProof = JSONObject().put("type", "pair").put("name", "Mac").toString()
         assertEquals("rejected", JSONObject(proto("482913").handle(noProof)).getString("type"))
