@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 // What you see when you click the menu-bar icon.
 struct ContentView: View {
@@ -8,14 +7,6 @@ struct ContentView: View {
     // its @Published values change". The app owns the Browser + Connector.
     @ObservedObject var browser: Browser
     @ObservedObject var connector: Connector
-
-    /// Phase 4a: flip to true to open the file picker.
-    ///
-    /// We use SwiftUI's .fileImporter (asynchronous) rather than
-    /// `NSOpenPanel.runModal()`. This app is a sandboxed menu-bar agent
-    /// (LSUIElement), and running a modal panel synchronously on the main
-    /// thread hangs the whole app — the beachball the first version produced.
-    @State private var isChoosingFile = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -152,7 +143,11 @@ struct ContentView: View {
 
             if connector.isPaired {
                 Button("Send file to phone…") {
-                    isChoosingFile = true
+                    // Not `.fileImporter`: that opens a sheet on the menu-bar
+                    // window, which dies the moment it loses focus. The panel is
+                    // presented app-modal instead, so it survives (and never
+                    // blocks the thread). See Connector.chooseAndSendFile().
+                    connector.chooseAndSendFile()
                 }
                 .font(.caption2)
 
@@ -175,18 +170,6 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(width: 240)
-        // The async file picker. Picking a file hands its URL to the connector,
-        // which opens a security scope before reading it (the sandbox forbids
-        // reading a user file without one).
-        .fileImporter(
-            isPresented: $isChoosingFile,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                connector.sendFile(at: url)
-            }
-        }
     }
 }
 

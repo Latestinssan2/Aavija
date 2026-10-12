@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 import Security
@@ -693,6 +694,37 @@ final class Connector: ObservableObject {
     /// always the one that dials. A send therefore reuses the same dial we use
     /// for polling: connect, prove we hold the token (`auth`), then stream the
     /// header + bytes. The phone keeps the file only if the SHA-256 matches.
+    /// Show the Mac's open panel, then send whatever file the user picks.
+    ///
+    /// We deliberately do NOT use SwiftUI's `.fileImporter` for this. It
+    /// presents the picker as a SHEET stuck to the menu-bar window — and a
+    /// menu-bar window closes the instant it resigns key, which is exactly when
+    /// the picker grabs focus. The sheet dies mid-click and the picker vanishes;
+    /// that was the bug. `NSOpenPanel.begin` presents the panel as its own
+    /// APP-MODAL window, untied to that fragile window, and it returns
+    /// immediately — so nothing blocks our one thread (the difference from the
+    /// very first version, which froze everything with `runModal()`).
+    func chooseAndSendFile() {
+        // An accessory (menu-bar) app isn't frontmost, so bring it forward —
+        // otherwise the panel can open behind other windows and never get focus.
+        NSApp.activate(ignoringOtherApps: true)
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Send"
+        panel.message = "Choose a file to send to your phone"
+
+        panel.begin { [weak self] response in
+            // `begin` calls back on the main thread; tell the compiler that.
+            MainActor.assumeIsolated {
+                guard response == .OK, let url = panel.url else { return }
+                self?.sendFile(at: url)
+            }
+        }
+    }
+
     func sendFile(at url: URL) {
         guard pairingEndpoint == nil else {
             transferStatus = "Finish pairing first."
