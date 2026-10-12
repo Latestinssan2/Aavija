@@ -65,8 +65,23 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 - Unpaired devices are rejected **before any file bytes** are accepted.
 - A gesture never causes a file to be accepted from an unknown device.
 
-### Discovery of Macs (Phase 5a/5b)
+### Is the phone actually there? (heartbeat)
 
+- A stored pairing is **trust**, not a live link. The two must not be
+  conflated: with the phone's Wi-Fi off, nothing can be transferred, yet a
+  record saying "paired" is still on disk and is still true.
+- So the Mac decides "connected" from a real round-trip, not from the record.
+  While paired it dials the phone every ~3 s and sends `{"type":"ping"}`.
+- The phone answers `{"type":"pong"}`. It verifies nothing, changes nothing,
+  and burns no PIN attempt — it only proves the phone is on the Wi-Fi and
+  speaking our protocol.
+- The panel says **"Connected to \<phone\>"** only after a pong, and
+  **"Disconnected — \<phone\> isn't reachable"** when pings stop (phone off the
+  Wi-Fi, powered down, or the app closed).
+- The phone's name is remembered at pairing time so the panel can name it even
+  while it's offline.
+
+### Discovery of Macs (Phase 5a/5b)
 - The Mac announces itself as `_aavija-mac._tcp` with `DNSServiceRegister` —
   **not** `NWListener`, which is broken on this machine. Registering asks
   `mDNSResponder` to broadcast UDP and opens no listening socket at all.
@@ -139,3 +154,7 @@ and move a file. Anything marked **TBD** is decided in a later phase.
   `auth` first, then a JSON header + 1 MB chunks, SHA-256 checked as the bytes
   land, saved to `Downloads/GestureShare` through MediaStore, and deleted if the
   hash doesn't match. 200 MB cap. 14 new JVM tests cover the safety rules.
+- Fix: "Paired" no longer pretends the phone is reachable. The Mac heartbeats
+  (`ping`/`pong`) and shows "Connected to <phone>" vs "Disconnected". Also fixed
+  the Send freeze — the file picker is now async, the file is read off the main
+  thread, and the sandbox security scope is opened before reading.
