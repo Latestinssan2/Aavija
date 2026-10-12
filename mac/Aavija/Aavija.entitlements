@@ -15,5 +15,12 @@
 	<!-- network.multicast: required for Bonjour/mDNS discovery traffic -->
 	<key>com.apple.security.network.multicast</key>
 	<true/>
+	<!-- files.user-selected.read-only: lets the OPEN PANEL hand us a file the
+	     user picked, and lets us read it to send it. Without this, AppKit
+	     refuses ("REPORT_APP_ENTITLEMENTS_INSUFFICIENT") and, under a debugger,
+	     traps — which is what made "Send file to phone…" look like a hang.
+	     Read-only is all we need: we never modify the user's files on the Mac. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
 </dict>
 </plist>
