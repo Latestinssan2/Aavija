@@ -97,10 +97,7 @@
       -webkit-text-fill-color: transparent;
     }
 
-    /* ==========================================================================
-       FOUNDER SPOTLIGHT SECTION
-       ========================================================================== */
-
+    /* Founder Spotlight Section */
     .founder-section {
       padding: 100px 24px;
       position: relative;
@@ -399,10 +396,10 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 8px 16px;
-      border-radius: var(--radius-sm);
-      font-size: 0.82rem;
-      font-weight: 600;
+      padding: 10px 18px;
+      border-radius: var(--radius-md);
+      font-size: 0.85rem;
+      font-weight: 700;
       text-decoration: none;
       transition: var(--transition-fast);
     }
@@ -418,18 +415,6 @@
       color: #fff;
       transform: translateY(-2px);
     }
-
-    .btn-creator-sub.gh {
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border-subtle);
-      color: #cbd5e1;
-    }
-
-    .btn-creator-sub.gh:hover {
-      background: rgba(255, 255, 255, 0.12);
-      color: #fff;
-      transform: translateY(-2px);
-    }
   </style>
 </head>
 <body class="selection:bg-cyan-500/20 selection:text-cyan-300 relative min-h-screen">
@@ -441,18 +426,12 @@
   <div class="fixed top-[-10%] left-[20%] w-[550px] h-[550px] rounded-full bg-cyan-600/15 blur-[120px] pointer-events-none animate-glow-pulse z-0"></div>
   <div class="fixed top-[40%] right-[-10%] w-[600px] h-[600px] rounded-full bg-purple-600/15 blur-[140px] pointer-events-none animate-glow-pulse z-0" style="animation-delay: 2s;"></div>
 
-  <!-- Header Navigation -->
+  <!-- Header Navigation: Wide Logo with NO border -->
   <header class="relative z-50 max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
     <a href="#" class="flex items-center gap-3 group">
-      <div class="w-11 h-11 rounded-xl bg-black border border-white/20 p-1 flex items-center justify-center shadow-lg group-hover:border-cyan-400/60 transition-all duration-300">
-        <img src="logo.png" alt="Aavija Logo" class="w-full h-full object-contain">
-      </div>
-      <div>
-        <span class="font-display font-black text-2xl tracking-tight text-white flex items-center gap-1.5">
-          આવી જા <span class="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-sans font-medium">v1.0</span>
-        </span>
-        <span class="text-[11px] font-medium text-slate-400 tracking-wider uppercase block" data-i18n="tagline">જેસ્ચર એરડ્રોપ • Wi-Fi</span>
-      </div>
+      <!-- Wide Aavija logo without any borders or bounding box -->
+      <img src="logo-wide-header.png" alt="Aavija Logo" class="h-9 sm:h-11 w-auto object-contain transition-transform duration-300 group-hover:scale-105">
+      <span class="text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono font-medium">v1.0</span>
     </a>
 
     <nav class="hidden md:flex items-center gap-7 text-sm font-semibold text-slate-300">
@@ -463,16 +442,16 @@
       <a href="#download" class="hover:text-cyan-400 transition-colors" data-i18n="nav_download">ડાઉનલોડ</a>
     </nav>
 
-    <!-- Language Switcher & Install Action -->
+    <!-- Language Switcher & Instagram Profile Action (No GitHub Link) -->
     <div class="flex items-center gap-3">
       <div class="flex items-center p-1 rounded-xl bg-slate-900 border border-white/10 text-xs font-bold">
         <button id="langGu" onclick="setLanguage('gu')" class="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 transition-all">ગુજરાતી</button>
         <button id="langEn" onclick="setLanguage('en')" class="px-2.5 py-1 rounded-lg text-slate-400 hover:text-white transition-all">English</button>
       </div>
 
-      <a href="https://github.com/Latestinssan2/Aavija" target="_blank" rel="noopener" class="hidden sm:flex px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-bold text-white items-center gap-2 transition-all">
-        <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        GitHub
+      <a href="https://www.instagram.com/_preert_/" target="_blank" rel="noopener" class="hidden sm:flex px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500/20 to-purple-500/20 hover:from-pink-500/30 hover:to-purple-500/30 border border-pink-500/30 text-xs font-bold text-pink-300 items-center gap-2 transition-all">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+        @_preert_
       </a>
 
       <a href="#download" class="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/25 transition-all" data-i18n="btn_install">
@@ -719,7 +698,7 @@
   </section>
 
   <!-- ==========================================================================
-       FOUNDER / DEVELOPER SPOTLIGHT SECTION (PREET PATEL)
+       FOUNDER / DEVELOPER SPOTLIGHT SECTION (PREET PATEL ONLY)
        ========================================================================== -->
   <section id="creator" class="founder-section border-t border-white/5">
     <div class="section-container">
@@ -764,27 +743,22 @@
           <div class="founder-info-col">
             <div class="founder-tags-row">
               <span class="founder-role-badge">Lead Developer</span>
-              <span class="founder-aura-tag">Aartiq™ Creator</span>
+              <span class="founder-aura-tag">Creator</span>
               <span class="founder-role-badge badge-tech">Swift & Kotlin</span>
             </div>
             <h3 class="founder-name">Preet Patel (પ્રીત પટેલ)</h3>
             <div class="founder-handle-link">
               <a href="https://www.instagram.com/_preert_/" target="_blank" rel="noopener">@_preert_ on Instagram</a>
-              <span class="text-slate-500">•</span>
-              <a href="https://github.com/Latestinssan2" target="_blank" rel="noopener">Latestinssan2 on GitHub</a>
             </div>
             <p class="founder-quote" data-i18n="creator_quote">
               "એપલનું ઇકોસિસ્ટમ બંધિયાર છે. અમે મેક અને એન્ડ્રોઇડ વચ્ચે માત્ર એક હાથના ઇશારે હવામાંથી ફાઇલો પસાર કરવાનો જાદુ બનાવ્યો છે."
             </p>
             <p class="founder-story" data-i18n="creator_story">
-              <strong>Aavija (આવી જા)</strong> નું સર્જન ભારતમાંથી થયું છે. ક્લાઉડ, બ્લૂટૂથ કે ઇન્ટરનેટ વગર સીધા લોકલ વાઇ-ફાઇ પર મેક અને એન્ડ્રોઇડ વચ્ચે સૌથી ઝડપી અને સુરક્ષિત ફાઇલ શેરિંગ.
+              <strong>Aavija (આવી જા)</strong> નું સર્જન પ્રીત પટેલ દ્વારા કરવામાં આવ્યું છે. ક્લાઉડ, બ્લૂટૂથ કે ઇન્ટરનેટ વગર સીધા લોકલ વાઇ-ફાઇ પર મેક અને એન્ડ્રોઇડ વચ્ચે સૌથી ઝડપી અને સુરક્ષિત ફાઇલ શેરિંગ.
             </p>
             <div class="creator-quick-links">
               <a href="https://www.instagram.com/_preert_/" target="_blank" rel="noopener" class="btn-creator-sub ig">
-                📷 Instagram @_preert_
-              </a>
-              <a href="https://github.com/Latestinssan2/Aavija" target="_blank" rel="noopener" class="btn-creator-sub gh">
-                💻 GitHub @Latestinssan2
+                📷 Instagram પર જોડાઓ (@_preert_)
               </a>
             </div>
           </div>
@@ -854,8 +828,8 @@
           <a href="https://github.com/Latestinssan2/Aavija/releases/download/v1.0.0/Aavija.apk" class="w-full py-4 rounded-xl bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-display font-bold text-center block shadow-lg shadow-emerald-500/25 transition-all" data-i18n="btn_apk">
             ડાઉનલોડ .APK (સીધું ઇન્સ્ટોલ)
           </a>
-          <a href="https://github.com/Latestinssan2/Aavija/releases" target="_blank" rel="noopener" class="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-semibold text-center block border border-white/10 transition-all" data-i18n="btn_all_releases">
-            બધા GitHub રીલિઝ જુઓ
+          <a href="https://github.com/Latestinssan2/Aavija/releases/download/v1.0.0/Aavija-macOS.dmg" class="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-semibold text-center block border border-white/10 transition-all">
+            macOS વર્ઝન ડાઉનલોડ (.DMG)
           </a>
         </div>
       </div>
@@ -863,19 +837,16 @@
     </div>
   </section>
 
-  <!-- Footer -->
+  <!-- Footer (No GitHub link, Preet Patel only) -->
   <footer class="relative z-10 border-t border-white/5 py-12 px-6 max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6 text-xs text-slate-500">
     <div class="flex items-center gap-3">
-      <div class="w-6 h-6 rounded-md bg-black border border-white/20 p-0.5">
-        <img src="logo.png" alt="Aavija" class="w-full h-full object-contain">
-      </div>
-      <span>આવી જા (Aavija) • સર્જક: પ્રીત પટેલ (Preet Patel) & Aartiq™</span>
+      <img src="logo-wide-header.png" alt="Aavija" class="h-6 w-auto object-contain">
+      <span>આવી જા (Aavija) • સર્જક: પ્રીત પટેલ (Preet Patel)</span>
     </div>
     <div class="flex items-center gap-6">
       <a href="https://www.instagram.com/_preert_/" target="_blank" rel="noopener" class="hover:text-pink-400 transition-colors">Instagram @_preert_</a>
-      <a href="https://github.com/Latestinssan2/Aavija" target="_blank" rel="noopener" class="hover:text-white transition-colors">GitHub Repository</a>
-      <a href="https://github.com/Latestinssan2/Aavija/releases" target="_blank" rel="noopener" class="hover:text-white transition-colors">Releases</a>
-      <a href="https://github.com/Latestinssan2/Aavija/blob/main/LICENSE" target="_blank" rel="noopener" class="hover:text-white transition-colors">MIT License</a>
+      <a href="#download" class="hover:text-cyan-400 transition-colors" data-i18n="nav_download">ડાઉનલોડ</a>
+      <a href="#creator" class="hover:text-cyan-400 transition-colors" data-i18n="nav_creator">નિર્માતા</a>
     </div>
   </footer>
 
@@ -930,7 +901,7 @@
         creator_heading: "ડેવલપર અને ફાઉન્ડર",
         creator_sub: "Aavija (આવી જા) ના સર્જક પ્રીત પટેલ (Preet Patel) — સ્થાનિક નેટવર્ક પર સરળ, ગોપનીય અને જાદુઈ ફાઇલ શેરિંગ માટેનું ભારતીય સંશોધન.",
         creator_quote: '"એપલનું ઇકોસિસ્ટમ બંધિયાર છે. અમે મેક અને એન્ડ્રોઇડ વચ્ચે માત્ર એક હાથના ઇશારે હવામાંથી ફાઇલો પસાર કરવાનો જાદુ બનાવ્યો છે."',
-        creator_story: '<strong>Aavija (આવી જા)</strong> નું સર્જન ભારતમાંથી થયું છે. ક્લાઉડ, બ્લૂટૂથ કે ઇન્ટરનેટ વગર સીધા લોકલ વાઇ-ફાઇ પર મેક અને એન્ડ્રોઇડ વચ્ચે સૌથી ઝડપી અને સુરક્ષિત ફાઇલ શેરિંગ.',
+        creator_story: '<strong>Aavija (આવી જા)</strong> નું સર્જન પ્રીત પટેલ દ્વારા કરવામાં આવ્યું છે. ક્લાઉડ, બ્લૂટૂથ કે ઇન્ટરનેટ વગર સીધા લોકલ વાઇ-ફાઇ પર મેક અને એન્ડ્રોઇડ વચ્ચે સૌથી ઝડપી અને સુરક્ષિત ફાઇલ શેરિંગ.',
         down_heading: "આજે જ Aavija (આવી જા) ડાઉનલોડ કરો.",
         down_sub: "મફત, ઓપન સોર્સ અને Apple Silicon, Intel Mac તેમજ Android ઉપકરણો માટે ઉપલબ્ધ.",
         mac_card_title: "મેક માટે Aavija",
@@ -938,8 +909,7 @@
         android_card_title: "એન્ડ્રોઇડ માટે Aavija",
         android_card_desc: "આધુનિક Jetpack Compose એપ જેમાં ડાર્ક/લાઇટ થીમ્સ, મેજિક બ્લેકઆઉટ અને પિંચ-ટુ-ઝૂમ વ્યુઅર છે.",
         btn_dmg: "ડાઉનલોડ .DMG (ભલામણ કરેલ)",
-        btn_apk: "ડાઉનલોડ .APK (સીધું ઇન્સ્ટોલ)",
-        btn_all_releases: "બધા GitHub રીલિઝ જુઓ"
+        btn_apk: "ડાઉનલોડ .APK (સીધું ઇન્સ્ટોલ)"
       },
       en: {
         tagline: "Gesture AirDrop • Wi-Fi",
@@ -988,7 +958,7 @@
         creator_heading: "Developer & Founder",
         creator_sub: "Created by Preet Patel — built for seamless, private, and gesture-driven file transfer between Mac and Android.",
         creator_quote: '"Apple\'s ecosystem is a walled garden. We built mid-air gesture magic to let files fly between Mac and Android with a flick of the hand."',
-        creator_story: '<strong>Aavija (આવી જા)</strong> was built in India. Peer-to-peer file transfer over local Wi-Fi without internet, bluetooth friction, or third-party cloud servers.',
+        creator_story: '<strong>Aavija (આવી જા)</strong> was built by Preet Patel. Peer-to-peer file transfer over local Wi-Fi without internet, bluetooth friction, or third-party cloud servers.',
         down_heading: "Download Aavija Today.",
         down_sub: "Free, open source, and ready to install on Apple Silicon, Intel Macs, and Android phones.",
         mac_card_title: "Aavija for Mac",
@@ -996,8 +966,7 @@
         android_card_title: "Aavija for Android",
         android_card_desc: "Modern Jetpack Compose app with Light/Dark themes, Magic Blackout Mode, and edge-to-edge pinch-to-zoom viewer.",
         btn_dmg: "Download .DMG (Recommended)",
-        btn_apk: "Download .APK (Direct Download)",
-        btn_all_releases: "View All GitHub Releases"
+        btn_apk: "Download .APK (Direct Download)"
       }
     };
 
