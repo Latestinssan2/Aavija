@@ -75,6 +75,17 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 - The phone answers `{"type":"pong"}`. It verifies nothing, changes nothing,
   and burns no PIN attempt — it only proves the phone is on the Wi-Fi and
   speaking our protocol.
+- From Phase 7 the ping carries `{"type":"ping","token":"<hex>"}`. The token is
+  the same one minted at pairing, so the phone can tell a paired Mac from a
+  stranger. A pong to a valid token adds `gestureGate` (Gesture mode is ON, so
+  queued files must wait for a handshake), and `gesture` / `gestureId` /
+  `gestureAgeMs` (the phone's latest GRAB or RELEASE). The age is measured on
+  the phone's clock, so the two devices never need synchronised clocks.
+- A ping without a valid token is still answered with `pong` (so reachability
+  checking keeps working), but it carries no gesture fields — gestures are
+  private. An older phone simply omits the fields and keeps Phase 4b behaviour.
+- Phase 8 adds no wire messages: the orb/spinner is purely local UI, shown while
+  an already-authorized transfer is in flight.
 - The panel says **"Connected to \<phone\>"** only after a pong, and
   **"Disconnected — \<phone\> isn't reachable"** when pings stop (phone off the
   Wi-Fi, powered down, or the app closed).
@@ -159,9 +170,24 @@ file changes:
 - Android: CameraX + MediaPipe Hand Landmarker.
 - Mac: AVFoundation + Vision `VNDetectHumanHandPoseRequest`.
 - State machine `OPEN <-> FIST`, ~5-frame smoothing + minimum hold time.
-- GRAB (open→fist) on sender stores: selected file + timestamp, and tells the paired peer.
-- RELEASE (fist→open) on receiver within **10 s** starts the pull/transfer.
-- Timeout / failed transfer: TBD (Phase 6).
+- GRAB (open→fist) and RELEASE (fist→open) are matched **across the two
+  devices**: one side grabs, the other releases, within **10 s**. Each event
+  carries a monotonic id and an age measured on the sender's clock, so no clock
+  sync is needed.
+- The **Mac drives the transfer**, because it is the only side that can dial:
+  - phone grabbed → Mac released: the Mac pulls the phone's queued file.
+  - Mac grabbed → phone released: the Mac pushes the file it is holding.
+- While Gesture mode is ON on the phone, its queue is not auto-pulled just
+  because it exists (`gestureGate`); it waits for the handshake. Turning Gesture
+  mode off restores the Phase 4b "pull as soon as queued" behaviour.
+- On the Mac, "Hold a file for gesture…" selects a file without sending it. The
+  bytes stay in memory (max 200 MB) and are cleared when the file is delivered,
+  gesture mode is turned off, or the devices are unpaired.
+- The heartbeat tightens from 3 s to 1.5 s while gesture mode runs on either
+  side, so the 10 s window is not mostly spent in transit.
+- A gesture never bypasses authentication: it only changes WHEN an already
+  authorized transfer starts.
+- Unmatched gestures simply expire; a late release does nothing.
 
 ## Changelog
 
@@ -187,3 +213,8 @@ file changes:
   Mac verifies SHA-256 before writing to `~/Downloads/GestureShare/` and reports
   the result in the menu-bar panel. A failed send stays queued and is retried on
   the next heartbeat; the Mac guards against overlapping pulls.
+- Phase 7: **gesture-driven transfers.** The phone's latest GRAB/RELEASE ride on
+  `pong` with an age and an id; the Mac matches them with its own gestures in a
+  10 s window. Phone grab + Mac release pulls the queued file; Mac grab + phone
+  release pushes a held file. `gestureGate` stops the previous auto-pull while
+  the phone is in Gesture mode, and the heartbeat halves to 1.5 s.

@@ -19,6 +19,14 @@ final class GestureController: ObservableObject {
     private let worker = HandCameraWorker()
     private var wired = false
 
+    /// Phase 7: called for every detected GRAB/RELEASE, so the connector can
+    /// match it with the phone's gesture and start a transfer.
+    var onGesture: ((HandGestureMachine.EventType) -> Void)?
+
+    /// Phase 7: tells the connector whether gesture mode is effectively on, so
+    /// it can tighten the heartbeat and reset stale match state.
+    var onModeChanged: ((Bool) -> Void)?
+
     /// The capture session, for the preview layer.
     var session: AVCaptureSession { worker.session }
 
@@ -46,6 +54,7 @@ final class GestureController: ObservableObject {
             // Show the toggle as ON while the system prompt is up, so the
             // switch doesn't snap back while the user decides.
             isEnabled = true
+            onModeChanged?(true)
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 Task { @MainActor in
                     if granted {
@@ -63,6 +72,7 @@ final class GestureController: ObservableObject {
     private func begin() {
         wireCallbacksIfNeeded()
         isEnabled = true
+        onModeChanged?(true)
         guard !isRunning else { return }
         isRunning = true
         worker.start()
@@ -71,6 +81,7 @@ final class GestureController: ObservableObject {
     private func denied() {
         isEnabled = false
         isRunning = false
+        onModeChanged?(false)
         errorText = "Camera access is off. Turn it on in System Settings → Privacy & Security → Camera."
     }
 
@@ -78,6 +89,7 @@ final class GestureController: ObservableObject {
         isEnabled = false
         isRunning = false
         pose = .unknown
+        onModeChanged?(false)
         worker.stop()
     }
 
@@ -91,6 +103,9 @@ final class GestureController: ObservableObject {
         worker.onEvent = { [weak self] type in
             Task { @MainActor in
                 self?.lastEventText = (type == .grab) ? "GRAB ✊" : "RELEASE 🖐"
+                // Phase 7: pass to the connector so it can pair with the
+                // phone's gesture and trigger a transfer within 10 seconds.
+                self?.onGesture?(type)
             }
         }
         worker.onError = { [weak self] message in
@@ -98,6 +113,7 @@ final class GestureController: ObservableObject {
                 self?.errorText = message
                 self?.isEnabled = false
                 self?.isRunning = false
+                self?.onModeChanged?(false)
             }
         }
     }

@@ -196,6 +196,31 @@ struct ContentView: View {
                     }
                 }
 
+                // Phase 7: a file held for gesture sharing, and the rule that
+                // releases it. The phone's queue is held the same way.
+                if gesture.isEnabled {
+                    Button("Hold a file for gesture…") {
+                        connector.chooseFileToHold()
+                    }
+                    .font(.caption2)
+
+                    if let held = connector.stagedFileName {
+                        Text("Holding: \(held)")
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                            .multilineTextAlignment(.center)
+                        Text("GRAB here, then RELEASE on your phone within 10 s.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    } else {
+                        Text("Hold a file, then GRAB here and RELEASE on your phone within 10 s.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+
                 if let error = gesture.errorText {
                     Text(error)
                         .font(.caption2)
@@ -215,6 +240,17 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(width: 240)
+        .overlay {
+            // Phase 8: only while bytes are moving, in either direction.
+            if connector.isTransferring {
+                TransferOrbView(label: connector.transferStatus ?? "Sharing…")
+                    .transition(.scale(scale: 0.70).combined(with: .opacity))
+            }
+        }
+        .animation(
+            .spring(response: 0.35, dampingFraction: 0.68),
+            value: connector.isTransferring
+        )
     }
 }
 

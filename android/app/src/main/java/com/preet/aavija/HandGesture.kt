@@ -14,6 +14,73 @@ data class HandPoint(val x: Float, val y: Float, val z: Float = 0f)
 enum class HandPose { OPEN, FIST, UNKNOWN }
 
 /**
+ * Phase 7: one gesture as it travels to the other device.
+ *
+ * [ageMs] is measured on the REPORTER's clock, not an absolute timestamp. The
+ * two devices never need synchronised clocks: the receiver subtracts the age
+ * from its own "now" to estimate when the gesture happened.
+ *
+ * [id] increases with every gesture, so a receiver can ignore the same event
+ * being repeated on consecutive heartbeats.
+ */
+data class GestureOffer(
+    val type: String, // "grab" or "release"
+    val id: Long,
+    val ageMs: Long,
+)
+
+/**
+ * Remembers this device's latest gesture and offers it to the peer for as long
+ * as it can still match the other device's gesture.
+ *
+ * Only the latest event matters: if the user grabs, releases, then grabs again,
+ * the older events are already outside the window or were superseded.
+ */
+class GestureReporter(
+    private val clock: () -> Long,
+    private val windowMs: Long = MATCH_WINDOW_MS,
+) {
+    companion object {
+        /** How long a grab and the other device's release may be apart. */
+        const val MATCH_WINDOW_MS = 10_000L
+    }
+
+    private var nextId = 0L
+    private var lastType: String? = null
+    private var lastAtMs = 0L
+    private var lastId = 0L
+
+    /** Record a locally detected gesture. Thread-safe: camera and network differ. */
+    @Synchronized
+    fun record(type: HandGestureMachine.EventType, atMs: Long = clock()) {
+        nextId += 1
+        lastType = when (type) {
+            HandGestureMachine.EventType.GRAB -> "grab"
+            HandGestureMachine.EventType.RELEASE -> "release"
+        }
+        lastAtMs = atMs
+        lastId = nextId
+    }
+
+    /** The event to put on the wire, or null once it is too old to match. */
+    @Synchronized
+    fun offer(nowMs: Long = clock()): GestureOffer? {
+        val type = lastType ?: return null
+        val age = nowMs - lastAtMs
+        if (age < 0 || age > windowMs) return null
+        return GestureOffer(type = type, id = lastId, ageMs = age)
+    }
+
+    /** Forget everything (gesture mode turned off / camera stopped). */
+    @Synchronized
+    fun reset() {
+        lastType = null
+        lastAtMs = 0L
+        lastId = 0L
+    }
+}
+
+/**
  * The gesture state machine: frames in, GRAB/RELEASE events out.
  *
  * WHY NOT CLASSIFY EVERY FRAME INDEPENDENTLY? A hand in motion is ambiguous for

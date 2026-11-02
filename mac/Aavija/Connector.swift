@@ -40,12 +40,44 @@ final class Connector: ObservableObject {
     /// Phase 4a: progress/result of the last file send. nil = nothing sent yet.
     @Published private(set) var transferStatus: String?
 
+    /// Phase 8: true while bytes are moving in either direction. Drives the
+    /// orb overlay; false at rest, so the panel stays quiet.
+    @Published private(set) var isTransferring = false
+
     /// Copy the file we're sending so later steps can name it in the result.
     private var sendingName: String?
+    /// SHA-256 computed off the main thread before the send began.
+    private var sendingSHA: String?
 
-    /// Phase 4b: true while a pull from the phone is in flight, so the 3-second
+    /// Phase 4b: true while a pull from the phone is in flight, so the
     /// heartbeat can't start a second one on top of it.
     private var isFetching = false
+
+    // MARK: - Phase 7: gesture sharing
+
+    /// A file the user picked but did NOT send yet. Gesture mode holds it until
+    /// this Mac grabs and the phone releases.
+    private struct StagedFile {
+        let name: String
+        let data: Data
+        let sha256: String
+    }
+
+    private var stagedFile: StagedFile?
+
+    /// Name of the held file, so the panel can show it. nil = nothing held.
+    @Published private(set) var stagedFileName: String?
+
+    /// Pairs this Mac's own gestures with the phone's reported ones.
+    private let gestureMatcher = GestureMatcher()
+
+    /// Is Gesture mode on HERE? Used to tighten the heartbeat to 1.5 s so the
+    /// ten-second match window is not eaten by network latency.
+    private var localGestureMode = false
+
+    /// The phone's `gestureGate`: when true, queued phone files must wait for a
+    /// gesture. The Mac must not auto-pull them just because they exist.
+    private var remoteGestureGate = false
 
     /// Have we successfully paired with some phone?
     @Published private(set) var isPaired: Bool
@@ -258,6 +290,13 @@ final class Connector: ObservableObject {
     private var heartbeatTask: Task<Void, Never>?
     private var heartbeatConnection: NWConnection?
 
+    /// With gesture mode running on either side, check twice as often. The
+    /// match window is ten seconds; a three-second heartbeat would leave the
+    /// user as little as seven seconds to complete the gesture.
+    private var heartbeatInterval: UInt64 {
+        (localGestureMode || remoteGestureGate) ? 1_500_000_000 : Self.heartbeatEvery
+    }
+
     /// Start (or keep) the reachability loop. Safe to call repeatedly.
     private func startHeartbeat() {
         guard isPaired else { return }
@@ -269,10 +308,11 @@ final class Connector: ObservableObject {
         guard isPaired else { return }
         heartbeatTask?.cancel()
         heartbeatTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.heartbeatEvery)
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: self.heartbeatInterval)
             guard !Task.isCancelled else { return }
-            self?.heartbeatTask = nil
-            self?.heartbeatOnce()
+            self.heartbeatTask = nil
+            self.heartbeatOnce()
         }
     }
 
@@ -343,7 +383,9 @@ final class Connector: ObservableObject {
                     self?.finishHeartbeat(connection, reachable: false)
                     return
                 }
-                guard let line = Self.encodeLine(PingMessage()) else {
+                guard let line = Self.encodeLine(
+                    PingMessage(token: self.store.sessionToken.map(Pairing.hex))
+                ) else {
                     self.finishHeartbeat(connection, reachable: false)
                     return
                 }
@@ -364,6 +406,8 @@ final class Connector: ObservableObject {
                 guard let self else { return }
                 let ok: Bool
                 var outgoing = 0
+                var gestureGate = false
+                var offer: GestureOffer?
                 if let line, let obj = Self.decodeObject(line) {
                     ok = (obj["type"] as? String) == "pong"
                     if let o = obj["outgoing"] as? Int {
@@ -371,10 +415,32 @@ final class Connector: ObservableObject {
                     } else if let o = obj["outgoing"] as? NSNumber {
                         outgoing = o.intValue
                     }
+                    if let g = obj["gestureGate"] as? Bool {
+                        gestureGate = g
+                    } else if let g = obj["gestureGate"] as? NSNumber {
+                        gestureGate = g.boolValue
+                    }
+                    // Phase 7: the phone's latest gesture, with an age measured
+                    // on ITS clock so no clock sync is needed here.
+                    if let kindString = obj["gesture"] as? String,
+                       let kind = GestureOffer.Kind(rawValue: kindString) {
+                        let id = (obj["gestureId"] as? NSNumber)?.int64Value ?? 0
+                        let ageMs = (obj["gestureAgeMs"] as? NSNumber)?.doubleValue ?? -1
+                        if ageMs >= 0, ageMs <= GestureMatcher.window * 1000 {
+                            offer = GestureOffer(kind: kind, id: id, ageMs: ageMs)
+                        }
+                    }
                 } else {
                     ok = false
                 }
-                self.finishHeartbeat(connection, reachable: ok, hasOutgoing: outgoing > 0)
+                self.remoteGestureGate = gestureGate
+                self.finishHeartbeat(
+                    connection,
+                    reachable: ok,
+                    hasOutgoing: outgoing > 0,
+                    gestureGate: gestureGate,
+                    offer: offer
+                )
             }
         }
     }
@@ -382,18 +448,140 @@ final class Connector: ObservableObject {
     /// One attempt is over. Whoever gets here first (the answer or the
     /// watchdog) clears `heartbeatConnection`, so the other one stands down and
     /// we never schedule two loops.
-    private func finishHeartbeat(_ connection: NWConnection, reachable: Bool, hasOutgoing: Bool = false) {
+    private func finishHeartbeat(
+        _ connection: NWConnection,
+        reachable: Bool,
+        hasOutgoing: Bool = false,
+        gestureGate: Bool = false,
+        offer: GestureOffer? = nil
+    ) {
         guard heartbeatConnection === connection else { return }
         heartbeatConnection = nil
         connection.cancel()
         isReachable = reachable
         scheduleNextHeartbeat()
-        if reachable && hasOutgoing {
-            // The phone has a file waiting. Pull it now.
-            Task { @MainActor in
-                self.fetchOutgoingFile()
+        guard reachable else { return }
+
+        // Phase 7: a gesture that matches one of ours starts the transfer.
+        if let offer {
+            handleRemoteGesture(offer)
+        }
+
+        // Phase 4b behaviour, unless the phone is in Gesture mode: then the
+        // queue must wait for a grab/release handshake, not be pulled on sight.
+        if hasOutgoing && !gestureGate {
+            fetchOutgoingFile()
+        }
+    }
+
+    // MARK: - Phase 7: matching gestures
+
+    /// Gesture mode was switched on/off in the panel.
+    func setLocalGestureMode(_ on: Bool) {
+        guard localGestureMode != on else { return }
+        localGestureMode = on
+        gestureMatcher.reset()
+
+        if !on {
+            // No reason to keep a private file's bytes in memory once gesture
+            // sharing is off.
+            clearStagedFile()
+        }
+
+        // Apply the new heartbeat rate immediately rather than after the old
+        // three-second tick.
+        if isPaired {
+            heartbeatTask?.cancel()
+            heartbeatTask = nil
+            if heartbeatConnection == nil {
+                heartbeatOnce()
             }
         }
+    }
+
+    /// A gesture was detected on this Mac.
+    func handleLocalGesture(_ type: HandGestureMachine.EventType) {
+        let kind: GestureOffer.Kind = (type == .grab) ? .grab : .release
+        guard let action = gestureMatcher.onLocal(kind, at: CACurrentMediaTime()) else { return }
+        performGestureAction(action)
+    }
+
+    /// The phone reported a gesture on its heartbeat.
+    private func handleRemoteGesture(_ offer: GestureOffer) {
+        guard let action = gestureMatcher.onRemote(offer, at: CACurrentMediaTime()) else { return }
+        performGestureAction(action)
+    }
+
+    private func performGestureAction(_ action: GestureMatcher.Action) {
+        switch action {
+        case .pullFromPhone:
+            transferStatus = "Gesture matched — pulling from your phone…"
+            fetchOutgoingFile()
+        case .sendToPhone:
+            sendStagedFile()
+        }
+    }
+
+    /// Hold a file without sending it, so a gesture can release it later.
+    func chooseFileToHold() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Hold"
+        panel.message = "Choose a file for gesture sharing"
+
+        panel.begin { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .OK, let url = panel.url else { return }
+                self?.stageFile(at: url)
+            }
+        }
+    }
+
+    private func stageFile(at url: URL) {
+        transferStatus = "Reading \(url.lastPathComponent)…"
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let result = Result { try Data(contentsOf: url) }
+            await MainActor.run {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    guard data.count <= Self.maxFileBytes else {
+                        self.transferStatus = "File too large (max 200 MB)."
+                        return
+                    }
+                    let sha = Self.sha256Hex(data)
+                    self.stagedFile = StagedFile(
+                        name: url.lastPathComponent,
+                        data: data,
+                        sha256: sha
+                    )
+                    self.stagedFileName = url.lastPathComponent
+                    self.transferStatus =
+                        "Holding \(url.lastPathComponent) — GRAB here, then RELEASE on your phone within 10 s."
+                case .failure(let error):
+                    self.transferStatus = "Couldn't read that file: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func sendStagedFile() {
+        guard let staged = stagedFile else {
+            transferStatus = "Gesture matched, but no file is held. Choose one with “Hold a file for gesture…”."
+            return
+        }
+        beginSend(data: staged.data, name: staged.name, sha256: staged.sha256)
+    }
+
+    func clearStagedFile() {
+        stagedFile = nil
+        stagedFileName = nil
     }
 
     // MARK: - Phase 4b: fetch a file from the paired phone (phone → Mac)
@@ -407,6 +595,7 @@ final class Connector: ObservableObject {
         guard !isFetching else { return }
         guard let endpoint = pollEndpoint, let token = store.sessionToken else { return }
         isFetching = true
+        isTransferring = true
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, _, c in c(true) }, .main)
         let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
@@ -417,6 +606,7 @@ final class Connector: ObservableObject {
                     self?.runFetch(on: connection, token: token)
                 case .cancelled, .failed:
                     self?.isFetching = false
+                    self?.isTransferring = false
                 default:
                     break
                 }
@@ -429,6 +619,7 @@ final class Connector: ObservableObject {
     /// wedge the queue as "always fetching".
     private func finishFetch(on connection: NWConnection) {
         isFetching = false
+        isTransferring = false
         connection.cancel()
     }
 
@@ -899,12 +1090,15 @@ final class Connector: ObservableObject {
             // SCOPE open before we may read it. (No-op if not sandboxed.)
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            let result = Result { try Data(contentsOf: url) }
+            let result = Result { () -> (Data, String) in
+                let data = try Data(contentsOf: url)
+                return (data, Self.sha256Hex(data))
+            }
             await MainActor.run {
                 guard let self else { return }
                 switch result {
-                case .success(let data):
-                    self.beginSend(data: data, name: url.lastPathComponent)
+                case .success(let (data, sha)):
+                    self.beginSend(data: data, name: url.lastPathComponent, sha256: sha)
                 case .failure(let error):
                     self.transferStatus = "Couldn't read that file: \(error.localizedDescription)"
                 }
@@ -912,8 +1106,12 @@ final class Connector: ObservableObject {
         }
     }
 
+    nonisolated private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// The file is in memory; dial the phone and push it.
-    private func beginSend(data: Data, name: String) {
+    private func beginSend(data: Data, name: String, sha256: String? = nil) {
         guard data.count <= Self.maxFileBytes else {
             transferStatus = "File too large (max 200 MB)."
             return
@@ -925,7 +1123,9 @@ final class Connector: ObservableObject {
         }
 
         sendingName = name
+        sendingSHA = sha256
         transferStatus = "Sending \(name)…"
+        isTransferring = true
         state = .connecting
 
         let tlsOptions = NWProtocolTLS.Options()
@@ -949,14 +1149,17 @@ final class Connector: ObservableObject {
                     self?.state = .failed(error.localizedDescription)
                     self?.transferStatus = "Send failed: \(error.localizedDescription)"
                     self?.isReachable = false
+                    self?.isTransferring = false
                     connection.cancel()
                 case .waiting(let error):
                     self?.state = .failed(error.localizedDescription)
                     self?.transferStatus = "Can't reach the phone: \(error.localizedDescription)"
                     self?.isReachable = false
+                    self?.isTransferring = false
                     connection.cancel()
                 case .cancelled:
                     self?.state = .idle
+                    self?.isTransferring = false
                 default:
                     break
                 }
@@ -1022,7 +1225,7 @@ final class Connector: ObservableObject {
             let size: Int
             let sha256: String
         }
-        let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let sha = sendingSHA ?? Self.sha256Hex(data)
         let header = FileHeaderSend(
             filename: sendingName ?? "file",
             size: data.count,
@@ -1074,6 +1277,7 @@ final class Connector: ObservableObject {
     private func readTransferResult(on connection: NWConnection) {
         readLine(on: connection) { [weak self] line in
             MainActor.assumeIsolated {
+                self?.isTransferring = false
                 defer { connection.cancel() }
                 guard let self else { return }
                 guard let line, let obj = Self.decodeObject(line) else {
@@ -1083,6 +1287,11 @@ final class Connector: ObservableObject {
                 switch obj["type"] as? String ?? "" {
                 case "received":
                     self.transferStatus = "Sent \(self.sendingName ?? "file") ✓"
+                    // A held file has been delivered; don't keep its bytes in
+                    // memory or offer it to a later gesture.
+                    if self.stagedFile?.name == self.sendingName {
+                        self.clearStagedFile()
+                    }
                 case "failed":
                     let reason = obj["reason"] as? String ?? "unknown"
                     self.transferStatus = "Phone deleted the file: \(reason)"
@@ -1108,6 +1317,8 @@ final class Connector: ObservableObject {
         retryTask = nil
         pairingEndpoint = nil
         stopHeartbeat()
+        gestureMatcher.reset()
+        clearStagedFile()
         store.clear()
         isPaired = false
         pairedPhoneName = nil
@@ -1122,6 +1333,8 @@ final class Connector: ObservableObject {
         pairingEndpoint = nil
         stopHeartbeat()
         stopPolling()
+        gestureMatcher.reset()
+        clearStagedFile()
         connection?.cancel()
         connection = nil
         state = .idle
@@ -1184,6 +1397,9 @@ private struct AuthMessage: Encodable {
 /// This is what lets the panel say "Disconnected" honestly.
 private struct PingMessage: Encodable {
     let type = "ping"
+    /// Proves this heartbeat comes from the paired Mac. The phone only adds
+    /// gesture fields to the pong when this token verifies.
+    let token: String?
 }
 
 /// Phase 4b: ask the phone to send any queued file to us.

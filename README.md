@@ -30,6 +30,13 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
    10-fps sampling and 5-frame OPEN/FIST state machine as Android). ✅
    (camera runs only while Gesture mode is ON, default OFF; no frames leave
    the Mac)
-7. Connect gestures to transfers (10s grab/release window).
-8. Animation overlay (orb / particles / spring-unfold).
+7. Connect gestures to transfers (10s grab/release window). ✅
+   - Either device's GRAB and the other device's RELEASE within 10 s trigger a
+     transfer (phone→Mac pull or Mac→phone push). 
+   - In Gesture mode the file queues wait for a gesture (not auto-pulled); the
+     Mac can hold a file for gesture release. Heartbeat tightens to 1.5 s while
+     gesture mode is on.
+8. Animation overlay (orb / particles / spring-unfold). ✅
+   - Both platforms show a self-contained orb with orbiting particles, only
+     while bytes are actually moving. No images or external animation library.
 9. Optional: Android foreground service, Mac background mode.

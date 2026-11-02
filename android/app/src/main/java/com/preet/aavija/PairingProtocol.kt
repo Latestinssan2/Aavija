@@ -93,7 +93,7 @@ class PairingProtocol(
 
         // 3) It must be a message type we speak at this step.
         return when (obj.optString("type")) {
-            "ping" -> handlePing()
+            "ping" -> handlePing(obj)
             "poll" -> handlePoll(obj)
             "pair" -> handlePair(obj)
             "auth" -> handleAuth(obj)
@@ -104,10 +104,41 @@ class PairingProtocol(
     /**
      * A HEARTBEAT: the Mac checking that the link is alive (Phase 4b).
      *
-     * Returns pong with outgoing file count, so the Mac can pull files if needed.
+     * Returns pong with the outgoing file count and, in Phase 7, the phone's
+     * latest gesture. The Mac drives transfers, so it is the side that matches
+     * the two devices' gestures; the phone only has to report its own.
      */
-    private fun handlePing(): String =
-        JSONObject().put("type", "pong").put("outgoing", outgoingCount()).toString()
+    private fun handlePing(obj: JSONObject): String {
+        val pong = JSONObject()
+            .put("type", "pong")
+            .put("outgoing", outgoingCount())
+
+        // Gestures are private. A pong only carries them when the ping proves
+        // it holds the session token this phone minted at pairing. Reachability
+        // still works for a caller without a token — it just learns nothing.
+        if (isTrustedHeartbeat(obj)) {
+            pong.put("gestureGate", gestureGate())
+            gestureOffer()?.let { offer ->
+                pong.put("gesture", offer.type)
+                    .put("gestureId", offer.id)
+                    .put("gestureAgeMs", offer.ageMs)
+            }
+        }
+        return pong.toString()
+    }
+
+    /** Does this ping carry a token this phone minted? */
+    private fun isTrustedHeartbeat(obj: JSONObject): Boolean {
+        val tokenHex = obj.optString("token")
+        if (tokenHex.isEmpty()) return false
+        val token = try {
+            PairingCrypto.fromHex(tokenHex)
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        val pairing = PinPairing(store) { System.currentTimeMillis() }
+        return pairing.isPairedToken(token)
+    }
 
     /**
      * "Did the user tap MY name on the phone?" — the Mac asking (Phase 5b).
@@ -213,6 +244,29 @@ class PairingProtocol(
     /** Allow caller to tell us how many files are queued to send to Mac (Phase 4b). */
     fun setOutgoingCountProvider(provider: () -> Int) {
         outgoingCount = provider
+    }
+
+    /**
+     * Phase 7: is Gesture mode ON on this phone? When it is, the phone's file
+     * queue is NOT pulled automatically; the Mac waits for a grab/release
+     * handshake. Turning Gesture mode off restores Phase 4b's "send as soon as
+     * a file is queued" behaviour.
+     */
+    private var gestureGate: () -> Boolean = { false }
+
+    fun setGestureGateProvider(provider: () -> Boolean) {
+        gestureGate = provider
+    }
+
+    /**
+     * Phase 7: the phone's most recent GRAB/RELEASE, if it is still inside the
+     * 10-second match window. Carried on every pong so the Mac can pair it with
+     * a local gesture without any clock synchronisation between devices.
+     */
+    private var gestureOffer: () -> GestureOffer? = { null }
+
+    fun setGestureOfferProvider(provider: () -> GestureOffer?) {
+        gestureOffer = provider
     }
 
     private fun reject(reason: String): String =

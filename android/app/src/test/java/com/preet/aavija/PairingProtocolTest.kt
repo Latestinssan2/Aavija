@@ -168,6 +168,44 @@ class PairingProtocolTest {
     }
 
     @Test
+    fun `pong reports the gesture gate and latest gesture only to the paired Mac`() {
+        // Phase 7: the Mac needs two things from the phone — whether Gesture
+        // mode is on (so it must not auto-pull) and the phone's latest gesture.
+        // Gestures are private, so an unauthenticated heartbeat gets neither.
+        val p = proto("482913")
+        var gate = true
+        var offer: GestureOffer? = GestureOffer(type = "grab", id = 7, ageMs = 123)
+        p.setGestureGateProvider { gate }
+        p.setGestureOfferProvider { offer }
+
+        val anonymous = JSONObject(p.handle(JSONObject().put("type", "ping").toString()))
+        assertEquals(false, anonymous.has("gestureGate"))
+        assertEquals(false, anonymous.has("gesture"))
+
+        // Pair to get a real token, then heartbeat with it.
+        val token = JSONObject(p.handle(pairJson(proofHex("482913")))).getString("token")
+        fun trustedPing() = JSONObject()
+            .put("type", "ping")
+            .put("token", token)
+            .toString()
+
+        val active = JSONObject(p.handle(trustedPing()))
+        assertEquals(true, active.getBoolean("gestureGate"))
+        assertEquals("grab", active.getString("gesture"))
+        assertEquals(7L, active.getLong("gestureId"))
+        assertEquals(123L, active.getLong("gestureAgeMs"))
+
+        // A revoked/garbage token is treated like no token at all.
+        val forged = JSONObject()
+            .put("type", "ping")
+            .put("token", "ab".repeat(32))
+            .toString()
+        val rejected = JSONObject(p.handle(forged))
+        assertEquals("pong", rejected.getString("type"))
+        assertEquals(false, rejected.has("gesture"))
+    }
+
+    @Test
     fun `a ping burns no pin attempt`() {
         val p = proto("482913")
         repeat(20) { p.handle(JSONObject().put("type", "ping").toString()) }

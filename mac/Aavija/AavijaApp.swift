@@ -16,7 +16,7 @@ struct AavijaApp: App {
 
     // Phase 6: gesture detection. Owned by the app (not the view) so turning
     // the camera on/off does not depend on whether the panel is open.
-    @StateObject private var gesture = GestureController()
+    @StateObject private var gesture: GestureController
 
     // Phase 5a: announce this Mac on the Wi-Fi (name only — no listening
     // socket) so the phone can list us as an available device. Not a
@@ -26,6 +26,7 @@ struct AavijaApp: App {
     init() {
         let browser = Browser()
         let connector = Connector()
+        let gesture = GestureController()
 
         // Phase 5b: whenever the phone list changes, point the connector at a
         // phone so it can ask "did the user tap my name?" every couple of
@@ -36,8 +37,19 @@ struct AavijaApp: App {
             connector?.phoneWasFound(devices.first?.endpoint)
         }
 
+        // Phase 7: hand detected gestures to the connector, which matches them
+        // with the phone's and starts the transfer. Also let it know when the
+        // camera starts/stops so it can tighten or relax the heartbeat.
+        gesture.onGesture = { [weak connector] type in
+            connector?.handleLocalGesture(type)
+        }
+        gesture.onModeChanged = { [weak connector] on in
+            connector?.setLocalGestureMode(on)
+        }
+
         _browser = StateObject(wrappedValue: browser)
         _connector = StateObject(wrappedValue: connector)
+        _gesture = StateObject(wrappedValue: gesture)
 
         // Start at launch, before the panel is ever opened, so the phone's
         // device list fills in immediately rather than after the first click.

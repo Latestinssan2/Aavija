@@ -132,6 +132,7 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
         )
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -296,7 +297,11 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
                 gestureMode = false
             }
         }
-        LaunchedEffect(gestureMode) {
+        LaunchedEffect(gestureMode, cameraGranted, state.isAdvertising) {
+            // Re-apply after the activity is resumed (advertising restarts and
+            // the state object is rebuilt), so the gate never drifts from the
+            // switch the user is looking at.
+            advertiser.setGestureMode(gestureMode && cameraGranted)
             if (gestureMode && !cameraGranted) {
                 cameraPermission.launch(Manifest.permission.CAMERA)
             }
@@ -335,6 +340,9 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
                         HandGestureMachine.EventType.GRAB -> "GRAB ✊"
                         HandGestureMachine.EventType.RELEASE -> "RELEASE 🖐"
                     }
+                    // Phase 7: report it to the Mac on the next heartbeat. The
+                    // Mac matches it with its own gesture and starts the pull.
+                    advertiser.onGesture(event)
                 },
                 onError = { cameraProblem = it },
             )
@@ -355,12 +363,31 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
+            if (state.isPaired) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "To send: GRAB here, then RELEASE on your Mac within 10 seconds. " +
+                        "Your Mac must also have Gesture mode on. While Gesture mode is on, " +
+                        "queued files are not sent automatically.",
+                    fontSize = 12.sp,
+                    color = Color.Gray,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
 
         cameraProblem?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, fontSize = 13.sp, color = Color(0xFFF44336), textAlign = TextAlign.Center)
         }
+    }
+
+        // Phase 8: the orb is visible only while bytes are actually moving,
+        // in either direction. Outside a transfer it costs nothing.
+        TransferOrbOverlay(
+            visible = state.isReceiving || state.isSending,
+            label = state.transferStatus ?: "Sharing…",
+        )
     }
 }
 

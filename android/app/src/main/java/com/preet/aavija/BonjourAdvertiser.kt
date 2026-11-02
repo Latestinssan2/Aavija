@@ -78,8 +78,14 @@ class BonjourAdvertiser(private val context: Context) {
         val transferStatus: String? = null,
         /** Phase 4a: a file is being received right now. */
         val isReceiving: Boolean = false,
+        /** Phase 4b/7: a queued file is being sent to the Mac right now. */
+        val isSending: Boolean = false,
         /** Phase 4a: the last transfer FAILED (so the UI can show red). */
         val transferFailed: Boolean = false,
+        /** Phase 7: Gesture mode is ON, so queued files wait for a gesture. */
+        val gestureMode: Boolean = false,
+        /** Phase 7: the last gesture this phone detected ("GRAB ✊" / "RELEASE 🖐"). */
+        val lastGesture: String? = null,
     )
 
     private val _state = MutableStateFlow(AdState())
@@ -160,6 +166,30 @@ class BonjourAdvertiser(private val context: Context) {
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private val outgoingQueue = OutgoingQueue()
+    private val gestureReporter = GestureReporter(clock = { System.currentTimeMillis() })
+    @Volatile
+    private var gestureModeOn = false
+
+    /** Called by MainActivity when Gesture mode is toggled. */
+    fun setGestureMode(enabled: Boolean) {
+        gestureModeOn = enabled
+        if (!enabled) {
+            gestureReporter.reset()
+            _state.value = _state.value.copy(gestureMode = false, lastGesture = null)
+        } else {
+            _state.value = _state.value.copy(gestureMode = true)
+        }
+    }
+
+    /** Called when the camera detects a GRAB/RELEASE. */
+    fun onGesture(type: HandGestureMachine.EventType) {
+        gestureReporter.record(type)
+        val text = when (type) {
+            HandGestureMachine.EventType.GRAB -> "GRAB ✊"
+            HandGestureMachine.EventType.RELEASE -> "RELEASE 🖐"
+        }
+        _state.value = _state.value.copy(lastGesture = text)
+    }
 
     fun queueOutgoingFile(uri: Uri, name: String, size: Long, sha256Hex: String) {
         if (size > 200L * 1024L * 1024L) {
@@ -167,7 +197,14 @@ class BonjourAdvertiser(private val context: Context) {
             return
         }
         outgoingQueue.enqueue(OutgoingFile(uri, name, size, sha256Hex))
-        _state.value = _state.value.copy(transferFailed = false, transferStatus = "Ready to send $name — waiting for the Mac")
+        _state.value = _state.value.copy(
+            transferFailed = false,
+            transferStatus = if (gestureModeOn) {
+                "Ready to send $name — do GRAB/RELEASE to trigger"
+            } else {
+                "Ready to send $name — waiting for the Mac"
+            },
+        )
     }
 
     /** Let the UI report a read/pick failure (e.g. hashing couldn't open the stream). */
@@ -344,6 +381,10 @@ class BonjourAdvertiser(private val context: Context) {
             typedPin = { _typedPin.value },
         )
         protocol.setOutgoingCountProvider { outgoingQueue.count() }
+        // Phase 7: while Gesture mode is ON, the Mac must NOT pull a queued file
+        // just because it exists. It waits for a grab/release handshake.
+        protocol.setGestureGateProvider { gestureModeOn }
+        protocol.setGestureOfferProvider { gestureReporter.offer() }
 
         // 1) Send the challenge so the Mac can build its proof.
         FileTransfer.writeLine(output, protocol.challengeLine())
@@ -479,6 +520,12 @@ class BonjourAdvertiser(private val context: Context) {
             FileTransfer.writeLine(output, JSONObject().put("type", "idle").toString())
             return
         }
+        // Phase 8: drives the orb overlay for the duration of the send.
+        _state.value = _state.value.copy(
+            isSending = true,
+            transferFailed = false,
+            transferStatus = "Sending ${file.name}…",
+        )
         // Send header
         val header = JSONObject()
             .put("type", "file")
@@ -486,9 +533,9 @@ class BonjourAdvertiser(private val context: Context) {
             .put("size", file.size)
             .put("sha256", file.sha256Hex)
             .toString()
-        FileTransfer.writeLine(output, header)
-        // Send body
+        // Send header + body
         try {
+            FileTransfer.writeLine(output, header)
             val stream = context.contentResolver.openInputStream(file.uri)
                 ?: throw IllegalStateException("file is no longer readable")
             stream.use { f ->
@@ -502,12 +549,13 @@ class BonjourAdvertiser(private val context: Context) {
             // into a "failed" row on the phone.
             runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "received").toString()) }
             _state.value = _state.value.copy(
+                isSending = false,
                 transferFailed = false,
                 transferStatus = "Sent ${file.name} to Mac ✓",
             )
         } catch (e: Exception) {
             runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "failed").put("reason", e.message ?: "send failed").toString()) }
-            _state.value = _state.value.copy(transferFailed = true, transferStatus = "Failed to send ${file.name}: ${e.message}")
+            _state.value = _state.value.copy(isSending = false, transferFailed = true, transferStatus = "Failed to send ${file.name}: ${e.message}")
         }
     }
 
