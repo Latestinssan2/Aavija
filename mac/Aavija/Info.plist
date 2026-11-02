@@ -31,5 +31,7 @@
 	<string>Aavija uses the camera to detect hand gestures. The camera runs only while Gesture mode is on; no video is recorded or sent.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Aavija finds and shares files with your devices on this Wi-Fi.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Aavija captures your screen when you grab with no file selected to share it.</string>
 </dict>
 </plist>

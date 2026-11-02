@@ -197,12 +197,17 @@ struct ContentView: View {
                 }
 
                 // Phase 7: a file held for gesture sharing, and the rule that
-                // releases it. The phone's queue is held the same way.
+                // releases it. With nothing held, a GRAB captures the screen.
                 if gesture.isEnabled {
-                    Button("Hold a file for gesture…") {
-                        connector.chooseFileToHold()
+                    if connector.isCapturing {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("Capturing your screen…")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
                     }
-                    .font(.caption2)
 
                     if let held = connector.stagedFileName {
                         Text("Holding: \(held)")
@@ -214,10 +219,34 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     } else {
-                        Text("Hold a file, then GRAB here and RELEASE on your phone within 10 s.")
+                        Text("No file held — GRAB captures your screen, then RELEASE on your phone to send it.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
+                    }
+
+                    Button("Or hold a file for gesture…") {
+                        connector.chooseFileToHold()
+                    }
+                    .font(.caption2)
+
+                    Button("Capture screen to hold") {
+                        connector.captureScreenNow()
+                    }
+                    .font(.caption2)
+
+                    if let captureError = connector.captureError {
+                        Text(captureError)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                        Button("Open Screen Recording settings…") {
+                            if let url = URL(string:
+                                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .font(.caption2)
                     }
                 }
 

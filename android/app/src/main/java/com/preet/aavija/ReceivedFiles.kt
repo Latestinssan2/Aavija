@@ -49,6 +49,16 @@ object ReceivedFiles {
             LegacyFileSink(filename)
         }
 
+    /**
+     * Is this something the phone can show in the new photo viewer?
+     *
+     * Deliberately extension-based and pure, so it is cheap to call on the
+     * receive thread and easy to unit-test. MediaStore still owns the real
+     * MIME type; this only decides whether to open the full-screen viewer.
+     */
+    fun isImageFile(filename: String): Boolean =
+        mimeTypeFor(filename).startsWith("image/")
+
     /** A rough MIME type from the extension — MediaStore shows a nicer icon. */
     fun mimeTypeFor(filename: String): String = when (filename.substringAfterLast('.', "").lowercase()) {
         "jpg", "jpeg" -> "image/jpeg"
@@ -130,9 +140,10 @@ private class LegacyFileSink(filename: String) : ReceiveSink {
 
     override val displayPath: String = file.absolutePath
 
-    override fun commit(): Uri? {
+    override fun commit(): Uri {
         closeOutput()
-        return null // no MediaStore row on this route
+        // A file:// URI is enough for our own in-app viewer on pre-Q devices.
+        return Uri.fromFile(file)
     }
 
     override fun abort() {

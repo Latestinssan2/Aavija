@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -106,6 +107,20 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
     val macs by macDiscovery.macs.collectAsState()
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
+
+    // Screenshot sharing: a newly received photo opens by itself. Keying on eventId means
+    // the same image does not reopen on every recomposition.
+    var openImage by remember { mutableStateOf<BonjourAdvertiser.ReceivedImage?>(null) }
+    var lastShownImageId by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(state.receivedImage?.eventId) {
+        val image = state.receivedImage ?: return@LaunchedEffect
+        // Only a genuinely NEW image opens; a rotation or recomposition must
+        // not re-open one the user already dismissed.
+        if (image.eventId > lastShownImageId) {
+            lastShownImageId = image.eventId
+            openImage = image
+        }
+    }
 
     // Phase 5b: a wrong PIN should be FELT, not just read. wrongPinCount goes
     // up by one per wrong guess, so buzzing on each change buzzes once per
@@ -367,7 +382,8 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "To send: GRAB here, then RELEASE on your Mac within 10 seconds. " +
-                        "Your Mac must also have Gesture mode on. While Gesture mode is on, " +
+                        "To receive a screenshot: GRAB on your Mac with no file held, then " +
+                        "RELEASE here — the photo opens by itself. While Gesture mode is on, " +
                         "queued files are not sent automatically.",
                     fontSize = 12.sp,
                     color = Color.Gray,
@@ -388,6 +404,14 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
             visible = state.isReceiving || state.isSending,
             label = state.transferStatus ?: "Sharing…",
         )
+
+        // Screenshot sharing: an incoming image unfolds into this full-screen viewer.
+        openImage?.let { image ->
+            ReceivedPhotoViewer(
+                image = image,
+                onDismiss = { openImage = null },
+            )
+        }
     }
 }
 

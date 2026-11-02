@@ -185,6 +185,14 @@ file changes:
   gesture mode is turned off, or the devices are unpaired.
 - The heartbeat tightens from 3 s to 1.5 s while gesture mode runs on either
   side, so the 10 s window is not mostly spent in transit.
+- If nothing is held on the Mac when it GRABs, it captures the main display
+  locally (ScreenCaptureKit) and stages that PNG instead. The release sends it
+  through the exact same authenticated file path as any other file — there are
+  no new wire messages and no change to the hash/size checks.
+- On Android, an image that passes the SHA-256 check is also opened in an
+  in-app full-screen viewer. That is presentation only: the verified file is
+  still saved to Downloads/GestureShare exactly as before. Non-images are saved
+  silently and are not opened.
 - A gesture never bypasses authentication: it only changes WHEN an already
   authorized transfer starts.
 - Unmatched gestures simply expire; a late release does nothing.

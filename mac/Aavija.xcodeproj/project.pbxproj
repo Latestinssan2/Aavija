@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		069F55B1544E7B8EABBC0D12 /* MacScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A4B3607BCF8042F96FE7DE /* MacScreenshot.swift */; };
 		08288A577CA1637E64D25502 /* MacAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */; };
 		1AF6F1FA6B70650A86CF0FA8 /* GestureDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A881117F45F0A2FCF5A8A97 /* GestureDetector.swift */; };
 		3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9F73B030AF09D953D88541 /* ContentView.swift */; };
@@ -16,6 +17,7 @@
 		8EF875FB29B928AA4C39227F /* AavijaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F950ECC52E74D712B85ECC /* AavijaApp.swift */; };
 		BC3542EF73B63A034C907E81 /* TransferOrbView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 981D4541A5E98B7026F8C4CE /* TransferOrbView.swift */; };
 		CF19EC9AFC5294C377251AD4 /* HandCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0109BD22B66A3E45056543F3 /* HandCamera.swift */; };
+		D7D8D1B43D1CD275B5114471 /* LiquidGlassCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD7A4D895FF68F07B0F5F396 /* LiquidGlassCapture.swift */; };
 		E5337D063FE5188E09BCE73D /* FileReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BECFD9B47C4660B2821573C3 /* FileReceiver.swift */; };
 		EDC806FC7C701B2870BB7B88 /* Browser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DAC989855EAF1A0D3E5898 /* Browser.swift */; };
 		EE6F998F2182CBE972BEE6A0 /* Connector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D45A020BC700586810DA43 /* Connector.swift */; };
@@ -34,9 +36,11 @@
 		BECFD9B47C4660B2821573C3 /* FileReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileReceiver.swift; sourceTree = "<group>"; };
 		C356DD276DA70E39BC3CFBC2 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		CB8EED84DE86F23DAE093D6B /* GestureMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureMatcher.swift; sourceTree = "<group>"; };
+		D4A4B3607BCF8042F96FE7DE /* MacScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScreenshot.swift; sourceTree = "<group>"; };
 		D9DAC989855EAF1A0D3E5898 /* Browser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Browser.swift; sourceTree = "<group>"; };
 		E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAdvertiser.swift; sourceTree = "<group>"; };
 		EB9F73B030AF09D953D88541 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		FD7A4D895FF68F07B0F5F396 /* LiquidGlassCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassCapture.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -70,7 +74,9 @@
 				CB8EED84DE86F23DAE093D6B /* GestureMatcher.swift */,
 				0109BD22B66A3E45056543F3 /* HandCamera.swift */,
 				4E5B31A66AE1AA51448AFEE9 /* Info.plist */,
+				FD7A4D895FF68F07B0F5F396 /* LiquidGlassCapture.swift */,
 				E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */,
+				D4A4B3607BCF8042F96FE7DE /* MacScreenshot.swift */,
 				C356DD276DA70E39BC3CFBC2 /* Pairing.swift */,
 				981D4541A5E98B7026F8C4CE /* TransferOrbView.swift */,
 			);
@@ -152,7 +158,9 @@
 				1AF6F1FA6B70650A86CF0FA8 /* GestureDetector.swift in Sources */,
 				8DDB4C60AC2C43CADE2BB782 /* GestureMatcher.swift in Sources */,
 				CF19EC9AFC5294C377251AD4 /* HandCamera.swift in Sources */,
+				D7D8D1B43D1CD275B5114471 /* LiquidGlassCapture.swift in Sources */,
 				08288A577CA1637E64D25502 /* MacAdvertiser.swift in Sources */,
+				069F55B1544E7B8EABBC0D12 /* MacScreenshot.swift in Sources */,
 				3E60D9198555CCC29DEEB305 /* Pairing.swift in Sources */,
 				BC3542EF73B63A034C907E81 /* TransferOrbView.swift in Sources */,
 			);

@@ -65,8 +65,26 @@ final class Connector: ObservableObject {
 
     private var stagedFile: StagedFile?
 
+    /// Was the held item produced by the automatic screen capture? If so, a
+    /// fresh GRAB should replace it with a new screenshot. A file the user
+    /// explicitly chose is kept until it is sent.
+    private var stagedIsScreenshot = false
+
     /// Name of the held file, so the panel can show it. nil = nothing held.
     @Published private(set) var stagedFileName: String?
+
+    /// Screenshot sharing: a capture is running in the background. Shown in the
+    /// panel so a grab with nothing held never feels like nothing happened.
+    @Published private(set) var isCapturing = false
+
+    /// Why the last automatic screenshot failed (usually missing Screen
+    /// Recording permission). nil after a success.
+    @Published private(set) var captureError: String?
+
+    /// A release arrived while the screenshot was still being taken. Once the
+    /// capture finishes, send it immediately instead of waiting for another
+    /// gesture — the user already completed the handshake.
+    private var pendingSendAfterCapture = false
 
     /// Pairs this Mac's own gestures with the phone's reported ones.
     private let gestureMatcher = GestureMatcher()
@@ -485,6 +503,7 @@ final class Connector: ObservableObject {
         if !on {
             // No reason to keep a private file's bytes in memory once gesture
             // sharing is off.
+            pendingSendAfterCapture = false
             clearStagedFile()
         }
 
@@ -502,8 +521,19 @@ final class Connector: ObservableObject {
     /// A gesture was detected on this Mac.
     func handleLocalGesture(_ type: HandGestureMachine.EventType) {
         let kind: GestureOffer.Kind = (type == .grab) ? .grab : .release
-        guard let action = gestureMatcher.onLocal(kind, at: CACurrentMediaTime()) else { return }
-        performGestureAction(action)
+        let action = gestureMatcher.onLocal(kind, at: CACurrentMediaTime())
+
+        // Grabbing with nothing held means "share what I'm looking at": take a
+        // screenshot right now and keep it staged, ready for the phone's
+        // release. If a file is already held, respect that choice instead.
+        if kind == .grab, localGestureMode, isPaired,
+           stagedFile == nil || stagedIsScreenshot {
+            captureScreenshot()
+        }
+
+        if let action {
+            performGestureAction(action)
+        }
     }
 
     /// The phone reported a gesture on its heartbeat.
@@ -561,6 +591,7 @@ final class Connector: ObservableObject {
                         data: data,
                         sha256: sha
                     )
+                    self.stagedIsScreenshot = false
                     self.stagedFileName = url.lastPathComponent
                     self.transferStatus =
                         "Holding \(url.lastPathComponent) — GRAB here, then RELEASE on your phone within 10 s."
@@ -571,16 +602,97 @@ final class Connector: ObservableObject {
         }
     }
 
-    private func sendStagedFile() {
-        guard let staged = stagedFile else {
-            transferStatus = "Gesture matched, but no file is held. Choose one with “Hold a file for gesture…”."
+    /// The manual equivalent of "GRAB with nothing held". Useful before a
+    /// gesture (capture now, then GRAB + RELEASE to send) and for checking
+    /// that Screen Recording permission is granted.
+    func captureScreenNow() {
+        guard isPaired else {
+            transferStatus = "Pair with your phone first."
             return
         }
+        guard localGestureMode else {
+            transferStatus = "Turn on Gesture mode first."
+            return
+        }
+        captureScreenshot()
+    }
+
+    /// Capture the main display and stage it as if the user had picked it.
+    ///
+    /// The PNG never touches disk: it lives in memory until the phone's release
+    /// sends it (or gesture mode ends, which frees it).
+    private func captureScreenshot() {
+        guard !isCapturing else { return }
+        isCapturing = true
+        captureError = nil
+        transferStatus = "Capturing your screen…"
+
+        Task { @MainActor in
+            do {
+                let data = try await MacScreenshot.capture()
+
+                // The user may have switched gesture mode off while the capture
+                // ran. Don't silently keep their screen in memory after that.
+                guard localGestureMode, isPaired else {
+                    isCapturing = false
+                    return
+                }
+                guard data.count <= Self.maxFileBytes else {
+                    isCapturing = false
+                    captureError = "The screenshot is larger than the 200 MB limit."
+                    transferStatus = captureError
+                    pendingSendAfterCapture = false
+                    return
+                }
+
+                let name = MacScreenshot.filename()
+                stagedFile = StagedFile(
+                    name: name,
+                    data: data,
+                    sha256: Self.sha256Hex(data)
+                )
+                stagedIsScreenshot = true
+                stagedFileName = name
+                isCapturing = false
+                captureError = nil
+
+                CaptureEffectPanel.shared.show(caption: "Screenshot captured")
+                transferStatus =
+                    "Screenshot captured — RELEASE on your phone within 10 s."
+
+                if pendingSendAfterCapture {
+                    pendingSendAfterCapture = false
+                    sendStagedFile()
+                }
+            } catch {
+                isCapturing = false
+                captureError = error.localizedDescription
+                transferStatus = error.localizedDescription
+                pendingSendAfterCapture = false
+            }
+        }
+    }
+
+    private func sendStagedFile() {
+        // A release can beat the capture by a few hundred milliseconds. Don't
+        // throw the gesture away: remember it and send the moment the PNG is
+        // ready.
+        if isCapturing {
+            pendingSendAfterCapture = true
+            transferStatus = "Gesture matched — sending the screenshot as soon as it's ready…"
+            return
+        }
+        guard let staged = stagedFile else {
+            transferStatus = "Gesture matched, but no file is held. GRAB with nothing held to capture your screen, or choose a file with “Hold a file for gesture…”."
+            return
+        }
+        pendingSendAfterCapture = false
         beginSend(data: staged.data, name: staged.name, sha256: staged.sha256)
     }
 
     func clearStagedFile() {
         stagedFile = nil
+        stagedIsScreenshot = false
         stagedFileName = nil
     }
 

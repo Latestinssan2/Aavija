@@ -86,6 +86,21 @@ class BonjourAdvertiser(private val context: Context) {
         val gestureMode: Boolean = false,
         /** Phase 7: the last gesture this phone detected ("GRAB ✊" / "RELEASE 🖐"). */
         val lastGesture: String? = null,
+        /**
+         * Screenshot sharing: the most recently received image, ready to open.
+         *
+         * [eventId] increases with every image so the UI can tell "a NEW photo
+         * arrived" from a recomposition showing the same one. Non-images leave
+         * this untouched.
+         */
+        val receivedImage: ReceivedImage? = null,
+    )
+
+    /** A saved image that the phone can open immediately after receiving it. */
+    data class ReceivedImage(
+        val uri: Uri,
+        val name: String,
+        val eventId: Long,
     )
 
     private val _state = MutableStateFlow(AdState())
@@ -167,6 +182,10 @@ class BonjourAdvertiser(private val context: Context) {
     private var multicastLock: WifiManager.MulticastLock? = null
     private val outgoingQueue = OutgoingQueue()
     private val gestureReporter = GestureReporter(clock = { System.currentTimeMillis() })
+
+    /** Increments once per saved image, so the viewer opens only for new ones. */
+    @Volatile
+    private var receivedImageEventId = 0L
     @Volatile
     private var gestureModeOn = false
 
@@ -481,14 +500,28 @@ class BonjourAdvertiser(private val context: Context) {
         try {
             val got = FileTransfer.receive(input, sink.output, header.size)
             if (got == header.sha256Hex) {
-                sink.commit()
+                val savedUri = sink.commit()
                 Log.i(TAG, "File received OK: ${header.filename} (${header.size} bytes)")
                 runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "received").toString()) }
-                _state.value = _state.value.copy(
+                val saved = _state.value.copy(
                     isReceiving = false,
                     transferFailed = false,
                     transferStatus = "Saved ${header.filename} to ${ReceivedFiles.DISPLAY_FOLDER}",
                 )
+                // Screenshot sharing: a received image opens by itself in the new viewer.
+                // The event id is what tells the UI this is a NEW photo rather
+                // than the same one coming back on a recomposition.
+                if (savedUri != null && ReceivedFiles.isImageFile(header.filename)) {
+                    _state.value = saved.copy(
+                        receivedImage = ReceivedImage(
+                            uri = savedUri,
+                            name = header.filename,
+                            eventId = ++receivedImageEventId,
+                        ),
+                    )
+                } else {
+                    _state.value = saved
+                }
             } else {
                 // Never leave a tampered / truncated file where it can be opened.
                 sink.abort()
