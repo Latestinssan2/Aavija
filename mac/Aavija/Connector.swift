@@ -77,6 +77,9 @@ final class Connector: ObservableObject {
     /// panel so a grab with nothing held never feels like nothing happened.
     @Published private(set) var isCapturing = false
 
+    /// Screenshot target mode: either entire display or active application window.
+    @Published var screenshotMode: ScreenshotMode = .entireScreen
+
     /// Why the last automatic screenshot failed (usually missing Screen
     /// Recording permission). nil after a success.
     @Published private(set) var captureError: String?
@@ -500,11 +503,16 @@ final class Connector: ObservableObject {
         localGestureMode = on
         gestureMatcher.reset()
 
-        if !on {
+        if on {
+            Task {
+                _ = await ScreenRecordingPermission.shared.requestIfNeeded()
+            }
+        } else {
             // No reason to keep a private file's bytes in memory once gesture
             // sharing is off.
             pendingSendAfterCapture = false
             clearStagedFile()
+            GestureEyeModel.shared.hide()
         }
 
         // Apply the new heartbeat rate immediately rather than after the old
@@ -521,6 +529,15 @@ final class Connector: ObservableObject {
     /// A gesture was detected on this Mac.
     func handleLocalGesture(_ type: HandGestureMachine.EventType) {
         let kind: GestureOffer.Kind = (type == .grab) ? .grab : .release
+
+        // Phase 9: the notch eye is the visible twin of this state machine.
+        // GRAB shuts it with a soft lid sound; RELEASE wakes it with a chime.
+        if kind == .grab {
+            GestureEyeModel.shared.grab()
+        } else {
+            GestureEyeModel.shared.release()
+        }
+
         let action = gestureMatcher.onLocal(kind, at: CACurrentMediaTime())
 
         // Grabbing with nothing held means "share what I'm looking at": take a
@@ -528,7 +545,7 @@ final class Connector: ObservableObject {
         // release. If a file is already held, respect that choice instead.
         if kind == .grab, localGestureMode, isPaired,
            stagedFile == nil || stagedIsScreenshot {
-            captureScreenshot()
+            captureScreenshot(fromGrab: true)
         }
 
         if let action {
@@ -538,6 +555,15 @@ final class Connector: ObservableObject {
 
     /// The phone reported a gesture on its heartbeat.
     private func handleRemoteGesture(_ offer: GestureOffer) {
+        // The phone repeats its latest gesture on every heartbeat. Only the
+        // first report should move the eye (and play its sound).
+        if gestureMatcher.isNew(offer) {
+            switch offer.kind {
+            case .grab: GestureEyeModel.shared.grab()
+            case .release: GestureEyeModel.shared.release()
+            }
+        }
+
         guard let action = gestureMatcher.onRemote(offer, at: CACurrentMediaTime()) else { return }
         performGestureAction(action)
     }
@@ -605,7 +631,10 @@ final class Connector: ObservableObject {
     /// The manual equivalent of "GRAB with nothing held". Useful before a
     /// gesture (capture now, then GRAB + RELEASE to send) and for checking
     /// that Screen Recording permission is granted.
-    func captureScreenNow() {
+    func captureScreenNow(mode: ScreenshotMode? = nil) {
+        if let mode = mode {
+            self.screenshotMode = mode
+        }
         guard isPaired else {
             transferStatus = "Pair with your phone first."
             return
@@ -614,27 +643,35 @@ final class Connector: ObservableObject {
             transferStatus = "Turn on Gesture mode first."
             return
         }
-        captureScreenshot()
+        Task {
+            _ = await ScreenRecordingPermission.shared.requestIfNeeded()
+            captureScreenshot(mode: self.screenshotMode)
+        }
     }
 
-    /// Capture the main display and stage it as if the user had picked it.
+    /// Capture either display or active app and stage it as if the user had picked it.
     ///
     /// The PNG never touches disk: it lives in memory until the phone's release
     /// sends it (or gesture mode ends, which frees it).
-    private func captureScreenshot() {
+    private func captureScreenshot(mode: ScreenshotMode? = nil, fromGrab: Bool = false) {
         guard !isCapturing else { return }
+        let targetMode = mode ?? self.screenshotMode
         isCapturing = true
         captureError = nil
-        transferStatus = "Capturing your screen…"
+        transferStatus = targetMode == .activeApp ? "Capturing active app…" : "Capturing your screen…"
+        GestureEyeModel.shared.capturing()
 
         Task { @MainActor in
             do {
-                let data = try await MacScreenshot.capture()
+                let result = try await MacScreenshot.capture(mode: targetMode)
+                let data = result.data
+                let name = result.filename
 
                 // The user may have switched gesture mode off while the capture
                 // ran. Don't silently keep their screen in memory after that.
                 guard localGestureMode, isPaired else {
                     isCapturing = false
+                    GestureEyeModel.shared.hide()
                     return
                 }
                 guard data.count <= Self.maxFileBytes else {
@@ -642,10 +679,10 @@ final class Connector: ObservableObject {
                     captureError = "The screenshot is larger than the 200 MB limit."
                     transferStatus = captureError
                     pendingSendAfterCapture = false
+                    GestureEyeModel.shared.failure("Screenshot is too large")
                     return
                 }
 
-                let name = MacScreenshot.filename()
                 stagedFile = StagedFile(
                     name: name,
                     data: data,
@@ -656,20 +693,28 @@ final class Connector: ObservableObject {
                 isCapturing = false
                 captureError = nil
 
-                CaptureEffectPanel.shared.show(caption: "Screenshot captured")
+                CaptureEffectPanel.shared.show()
                 AavijaSound.shared.screenshot()
                 transferStatus =
-                    "Screenshot captured — RELEASE on your phone within 10 s."
+                    "\(targetMode == .activeApp ? "Active app" : "Screenshot") captured — RELEASE on your phone within 10 s."
 
                 if pendingSendAfterCapture {
                     pendingSendAfterCapture = false
                     sendStagedFile()
+                } else if fromGrab {
+                    // The hand is still closed: keep the eye shut, ready for
+                    // the phone's RELEASE.
+                    GestureEyeModel.shared.holding("Screenshot ready")
+                } else {
+                    // Manual capture (no grab): open the eye to unveil it.
+                    GestureEyeModel.shared.ready("Screenshot captured")
                 }
             } catch {
                 isCapturing = false
                 captureError = error.localizedDescription
                 transferStatus = error.localizedDescription
                 pendingSendAfterCapture = false
+                GestureEyeModel.shared.failure("Couldn't capture")
             }
         }
     }
@@ -710,6 +755,7 @@ final class Connector: ObservableObject {
         isFetching = true
         isTransferring = true
         AavijaSound.shared.transferStart()
+        GestureEyeModel.shared.sharing("Pulling from your phone…")
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, _, c in c(true) }, .main)
         let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
@@ -817,8 +863,10 @@ final class Connector: ObservableObject {
                         case .ok(let path):
                             self.transferStatus = "Saved \(header.filename) to \(path)"
                             AavijaSound.shared.transferComplete()
+                            GestureEyeModel.shared.delivered("Saved \(header.filename)")
                         case .failed(let reason):
                             self.transferStatus = "Received \(header.filename) but failed: \(reason)"
+                            GestureEyeModel.shared.failure("File failed its checksum")
                         }
                         self.finishFetch(on: connection)
                         return
@@ -827,6 +875,7 @@ final class Connector: ObservableObject {
                         // The phone closed early. Say so instead of leaving the
                         // panel stuck on "Receiving…" forever.
                         self.transferStatus = "Transfer of \(header.filename) was cut short."
+                        GestureEyeModel.shared.failure("Transfer was cut short")
                         self.finishFetch(on: connection)
                         return
                     }
@@ -844,6 +893,12 @@ final class Connector: ObservableObject {
         // If we're already paired, start checking the link right away — a fresh
         // launch must not sit on a stale "connected" (or a stale "disconnected").
         if isPaired { heartbeatOnce() }
+
+        // Request Screen Recording permission upfront once so macOS registers
+        // Aavija in System Settings → Privacy & Security → Screen & System Audio Recording.
+        Task {
+            _ = await ScreenRecordingPermission.shared.requestIfNeeded()
+        }
     }
 
     /// Begin pairing with `endpoint`: generate a PIN, show it, then keep trying
@@ -1242,6 +1297,7 @@ final class Connector: ObservableObject {
         transferStatus = "Sending \(name)…"
         isTransferring = true
         AavijaSound.shared.transferStart()
+        GestureEyeModel.shared.sharing("Sending \(name)")
         state = .connecting
 
         let tlsOptions = NWProtocolTLS.Options()
@@ -1266,12 +1322,14 @@ final class Connector: ObservableObject {
                     self?.transferStatus = "Send failed: \(error.localizedDescription)"
                     self?.isReachable = false
                     self?.isTransferring = false
+                    GestureEyeModel.shared.failure("Couldn't reach your phone")
                     connection.cancel()
                 case .waiting(let error):
                     self?.state = .failed(error.localizedDescription)
                     self?.transferStatus = "Can't reach the phone: \(error.localizedDescription)"
                     self?.isReachable = false
                     self?.isTransferring = false
+                    GestureEyeModel.shared.failure("Couldn't reach your phone")
                     connection.cancel()
                 case .cancelled:
                     self?.state = .idle
@@ -1404,6 +1462,7 @@ final class Connector: ObservableObject {
                 case "received":
                     self.transferStatus = "Sent \(self.sendingName ?? "file") ✓"
                     AavijaSound.shared.transferComplete()
+                    GestureEyeModel.shared.delivered("Sent \(self.sendingName ?? "file")")
                     // A held file has been delivered; don't keep its bytes in
                     // memory or offer it to a later gesture.
                     if self.stagedFile?.name == self.sendingName {
@@ -1412,8 +1471,10 @@ final class Connector: ObservableObject {
                 case "failed":
                     let reason = obj["reason"] as? String ?? "unknown"
                     self.transferStatus = "Phone deleted the file: \(reason)"
+                    GestureEyeModel.shared.failure("Phone rejected the file")
                 default:
                     self.transferStatus = "Unexpected reply from the phone."
+                    GestureEyeModel.shared.failure("Unexpected reply from the phone")
                 }
             }
         }
@@ -1436,6 +1497,7 @@ final class Connector: ObservableObject {
         stopHeartbeat()
         gestureMatcher.reset()
         clearStagedFile()
+        GestureEyeModel.shared.hide()
         store.clear()
         isPaired = false
         pairedPhoneName = nil
@@ -1452,6 +1514,7 @@ final class Connector: ObservableObject {
         stopPolling()
         gestureMatcher.reset()
         clearStagedFile()
+        GestureEyeModel.shared.hide()
         connection?.cancel()
         connection = nil
         state = .idle

@@ -1,7 +1,7 @@
 # XcodeGen spec — run `xcodegen generate` in this folder to (re)build Aavija.xcodeproj
 name: Aavija
 options:
-  bundleIdPrefix: com.preet
+  bundleIdPrefix: com.aartiq
   deploymentTarget:
     macOS: "14.0"
 
@@ -17,19 +17,28 @@ targets:
     platform: macOS
     sources:
       - path: Aavija
+        excludes:
+          - Aavija.requirements
     settings:
       base:
         # NOTE: was com.preet.aavija — macOS had recorded a silent Local-Network
         # DENY for that ID (made before we added NSLocalNetworkUsageDescription,
         # so it never prompted and never asks again). New ID = fresh start, so
         # the app can trigger the real consent prompt.
-        PRODUCT_BUNDLE_IDENTIFIER: com.preet.aavija.mac
+        PRODUCT_BUNDLE_IDENTIFIER: com.aartiq.aavija.mac
         PRODUCT_NAME: Aavija
         GENERATE_INFOPLIST_FILE: "NO"
         INFOPLIST_FILE: Aavija/Info.plist
         CODE_SIGN_ENTITLEMENTS: Aavija/Aavija.entitlements
         ENABLE_HARDENED_RUNTIME: "YES"
         CODE_SIGN_IDENTITY: "-"
+        # Without this, an ad-hoc signature's designated requirement is just the
+        # binary's cdhash — which changes on every rebuild. macOS then treats the
+        # new build as a different app and asks for Screen Recording again.
+        # Pinning the requirement to the bundle identifier keeps one TCC grant
+        # valid across rebuilds. (Local development only: the app is ad-hoc
+        # signed, not distributed.)
+        OTHER_CODE_SIGN_FLAGS: "--requirements $(SRCROOT)/Aavija/Aavija.requirements"
     info:
       path: Aavija/Info.plist
       properties:

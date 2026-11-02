@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.preet.aavija"
+    namespace = "com.aartiq.aavija"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.preet.aavija"
+        applicationId = "com.aartiq.aavija"
         minSdk = 26          // Android 8.0 — matches the plan
         targetSdk = 35
         versionCode = 1

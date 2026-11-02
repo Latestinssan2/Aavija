@@ -81,6 +81,16 @@ final class GestureMatcher {
         }
     }
 
+    /// True if this is the first time we have seen this phone gesture.
+    /// The heartbeat repeats the latest gesture until it ages out, so the eye
+    /// animation and its sound must not fire again for the same id.
+    func isNew(_ offer: GestureOffer) -> Bool {
+        switch offer.kind {
+        case .grab: return remoteGrab?.id != offer.id
+        case .release: return remoteRelease?.id != offer.id
+        }
+    }
+
     /// Feed a gesture the phone reported on a heartbeat.
     func onRemote(_ offer: GestureOffer, at now: Double) -> Action? {
         let happenedAt = now - offer.ageMs / 1000.0

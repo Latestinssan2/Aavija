@@ -219,19 +219,53 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     } else {
-                        Text("No file held — GRAB (or hold a fist) to capture your screen, then RELEASE on your phone to send it.")
-                            .font(.caption2)
+                        if connector.screenshotMode == .activeApp {
+                            Text("Target: Active App — GRAB captures the frontmost window, then RELEASE on your phone.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        } else {
+                            Text("Target: Entire Screen — GRAB captures your whole screen, then RELEASE on your phone.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+
+                    // Screenshot Target Selector (Entire Screen vs Active App)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("SCREENSHOT TARGET")
+                            .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+                            .tracking(0.5)
+
+                        Picker("Screenshot Mode", selection: $connector.screenshotMode) {
+                            ForEach(ScreenshotMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    .padding(.vertical, 2)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            connector.captureScreenNow(mode: .entireScreen)
+                        } label: {
+                            Label("Entire Screen", systemImage: "display")
+                                .font(.caption2)
+                        }
+
+                        Button {
+                            connector.captureScreenNow(mode: .activeApp)
+                        } label: {
+                            Label("Active App", systemImage: "macwindow")
+                                .font(.caption2)
+                        }
                     }
 
                     Button("Or hold a file for gesture…") {
                         connector.chooseFileToHold()
-                    }
-                    .font(.caption2)
-
-                    Button("Capture screen to hold") {
-                        connector.captureScreenNow()
                     }
                     .font(.caption2)
 
@@ -241,6 +275,9 @@ struct ContentView: View {
                             .foregroundStyle(.red)
                             .multilineTextAlignment(.center)
                         Button("Open Screen Recording settings…") {
+                            Task {
+                                _ = await ScreenRecordingPermission.shared.requestIfNeeded()
+                            }
                             if let url = URL(string:
                                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
                                 NSWorkspace.shared.open(url)

@@ -70,5 +70,5 @@ Because the Debug build is ad-hoc signed, a rebuild can make macOS forget a
 permission. To reset only the screen-capture decision:
 
 ```sh
-tccutil reset ScreenCapture com.preet.aavija.mac
+tccutil reset ScreenCapture com.aartiq.aavija.mac
 ```

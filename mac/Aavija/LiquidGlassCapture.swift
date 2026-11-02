@@ -1,23 +1,24 @@
 import AppKit
 import SwiftUI
 
-/// A click-through window that plays a brief "liquid glass" capture effect over
-/// the whole screen whenever Aavija takes a screenshot.
+/// A click-through window that plays a brief ambient aurora whenever Aavija
+/// takes a screenshot.
 ///
-/// It never takes focus and never eats a click (`ignoresMouseEvents`), so it
-/// cannot interfere with whatever the user is doing. The window fades itself
-/// out after a couple of seconds.
+/// This used to be a full-screen card with a title and caption. Now the notch
+/// eye is the thing that talks; the screen effect's only job is to make the
+/// capture feel physical — a soft colour wash and an edge glint, no text, no
+/// centre-stage panel. It never takes focus or eats a click.
 @MainActor
 final class CaptureEffectPanel {
     static let shared = CaptureEffectPanel()
 
     private var panel: NSPanel?
+    private var dismissTask: Task<Void, Never>?
 
-    func show(caption: String) {
+    func show() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
-        // If a previous effect is still on screen, replace it rather than
-        // stacking panels.
+        dismissTask?.cancel()
         panel?.orderOut(nil)
 
         let panel = NSPanel(
@@ -29,80 +30,88 @@ final class CaptureEffectPanel {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.level = .statusBar
+        // Keep the ambient capture shimmer BELOW the notch eye, which lives at
+        // status-bar level, so the eye stays readable while the screen flashes.
+        panel.level = .floating
         panel.ignoresMouseEvents = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.contentView = NSHostingView(
-            rootView: LiquidGlassCaptureView(caption: caption)
-        )
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary,
+        ]
+        panel.contentView = NSHostingView(rootView: AmbientCaptureView())
         panel.setFrame(screen.frame, display: true)
+        panel.alphaValue = 1
         panel.orderFrontRegardless()
         self.panel = panel
 
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_100_000_000)
-            guard let self, self.panel === panel else { return }
+        dismissTask = Task { @MainActor [weak self] in
+            // Let the aurora bloom, then fade the whole window out.
+            try? await Task.sleep(nanoseconds: 850_000_000)
+            guard !Task.isCancelled, let self, self.panel === panel else { return }
+
             NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0.45
+            NSAnimationContext.current.duration = 0.50
             panel.animator().alphaValue = 0
             NSAnimationContext.endGrouping()
-            try? await Task.sleep(nanoseconds: 500_000_000)
+
+            try? await Task.sleep(nanoseconds: 520_000_000)
+            guard !Task.isCancelled else { return }
             panel.orderOut(nil)
             if self.panel === panel { self.panel = nil }
         }
     }
 }
 
-/// The actual Liquid Glass visual: slow aurora blobs, a rotating glass rim,
-/// drifting particles and a specular sweep, all behind one frosted card.
-///
-/// On macOS 26+ the card uses the real `glassEffect`; older systems fall back to
-/// materials, so the effect still reads as glass rather than a plain box.
-struct LiquidGlassCaptureView: View {
-    let caption: String
-
+/// Soft blobs at the screen edges, a bright edge glint, and one quick white
+/// breath. Deliberately understated: at 18 % black it reads as a shimmer, not
+/// a modal dialog.
+struct AmbientCaptureView: View {
     @State private var appeared = false
+    @State private var flash = true
 
     var body: some View {
         TimelineView(.animation) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
 
             ZStack {
-                Color.black
-                    .opacity(appeared ? 0.18 : 0)
-                    .ignoresSafeArea()
-
                 aurora(t)
-                    .opacity(appeared ? 1 : 0)
+                    .opacity(appeared ? 0.85 : 0)
+                    .blur(radius: 72)
 
-                card(t)
-                    .scaleEffect(appeared ? 1 : 0.55)
-                    .offset(y: appeared ? 0 : 18)
-                    .opacity(appeared ? 1 : 0)
+                edgeGlint
+                    .opacity(appeared ? 0.60 : 0)
+
+                Color.white
+                    .opacity(flash ? 0.075 : 0)
             }
         }
+        .ignoresSafeArea()
         .allowsHitTesting(false)
         .onAppear {
-            withAnimation(.spring(response: 0.52, dampingFraction: 0.70)) {
+            withAnimation(.easeOut(duration: 0.32)) {
                 appeared = true
+            }
+            withAnimation(.easeOut(duration: 0.62)) {
+                flash = false
             }
         }
     }
 
-    /// Soft coloured blobs that flow around like liquid in the background.
     private func aurora(_ t: TimeInterval) -> some View {
         Canvas { context, size in
+            // Pushed toward the edges so the desktop stays readable.
             let blobs: [(Color, Double, Double, Double, Double)] = [
-                (Color(red: 0.16, green: 0.74, blue: 1.00), 0.22, 0.30, 0.30, 0.37),
-                (Color(red: 0.55, green: 0.30, blue: 1.00), 0.76, 0.24, 0.34, 0.31),
-                (Color(red: 0.10, green: 0.90, blue: 0.80), 0.55, 0.78, 0.28, 0.41),
-                (Color(red: 0.95, green: 0.35, blue: 0.75), 0.18, 0.75, 0.22, 0.53),
+                (Color(red: 0.14, green: 0.72, blue: 1.00), 0.12, 0.82, 0.30, 0.34),
+                (Color(red: 0.58, green: 0.28, blue: 1.00), 0.88, 0.16, 0.28, 0.28),
+                (Color(red: 0.10, green: 0.92, blue: 0.78), 0.80, 0.86, 0.26, 0.40),
+                (Color(red: 0.96, green: 0.36, blue: 0.72), 0.22, 0.14, 0.22, 0.50),
             ]
 
             for (index, blob) in blobs.enumerated() {
                 let (color, x, y, radius, speed) = blob
-                let wobbleX = sin(t * speed + Double(index) * 1.7) * 0.07
-                let wobbleY = cos(t * speed * 0.8 + Double(index) * 2.1) * 0.06
+                let wobbleX = sin(t * speed + Double(index) * 1.7) * 0.05
+                let wobbleY = cos(t * speed * 0.8 + Double(index) * 2.1) * 0.04
                 let center = CGPoint(
                     x: size.width * (x + wobbleX),
                     y: size.height * (y + wobbleY)
@@ -117,7 +126,7 @@ struct LiquidGlassCaptureView: View {
                         height: r * 2
                     )),
                     with: .radialGradient(
-                        Gradient(colors: [color.opacity(0.55), color.opacity(0)]),
+                        Gradient(colors: [color.opacity(0.42), color.opacity(0)]),
                         center: center,
                         startRadius: 0,
                         endRadius: r
@@ -125,109 +134,26 @@ struct LiquidGlassCaptureView: View {
                 )
             }
         }
-        .blur(radius: 64)
-        .opacity(0.9)
+        .opacity(0.7)
     }
 
-    private func card(_ t: TimeInterval) -> some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
-
-                Circle()
-                    .stroke(
-                        AngularGradient(
-                            colors: [
-                                Color.white.opacity(0.95),
-                                Color(red: 0.20, green: 0.85, blue: 1.00).opacity(0.6),
-                                Color.white.opacity(0.12),
-                                Color(red: 0.60, green: 0.35, blue: 1.00).opacity(0.7),
-                                Color.white.opacity(0.95),
-                            ],
-                            center: .center
-                        ),
-                        lineWidth: 3
-                    )
-                    .rotationEffect(.degrees(t * 55))
-
-                Image(systemName: "camera.aperture")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
-            }
-            .frame(width: 78, height: 78)
-
-            Text(caption)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
-
-            Text("Aavija")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.62))
-        }
-        .padding(.horizontal, 30)
-        .padding(.vertical, 24)
-        .liquidGlassCard()
-        .overlay {
-            // A slow specular band crossing the glass.
-            GeometryReader { geo in
-                let x = geo.size.width * (CGFloat(sin(t * 0.9)) * 0.55 + 0.5)
+    /// A thin light along the very edge of the display, like a shutter blade
+    /// catching the light.
+    private var edgeGlint: some View {
+        Rectangle()
+            .strokeBorder(
                 LinearGradient(
                     colors: [
-                        .clear,
-                        .white.opacity(0.22),
-                        .white.opacity(0.55),
-                        .white.opacity(0.22),
-                        .clear,
+                        Color(red: 0.40, green: 0.90, blue: 1.00).opacity(0.55),
+                        .white.opacity(0.10),
+                        Color(red: 0.62, green: 0.45, blue: 1.00).opacity(0.45),
+                        .white.opacity(0.10),
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
-                )
-                .frame(width: 120)
-                .offset(x: x - 60)
-                .blur(radius: 6)
-                .blendMode(.plusLighter)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-            .allowsHitTesting(false)
-        }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func liquidGlassCard() -> some View {
-        if #available(macOS 26.0, *) {
-            self
-                .glassEffect(
-                    .regular,
-                    in: RoundedRectangle(cornerRadius: 30, style: .continuous)
-                )
-                .shadow(color: .black.opacity(0.35), radius: 34, y: 14)
-        } else {
-            self
-                .background(
-                    .ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: 30, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    .white.opacity(0.70),
-                                    .white.opacity(0.10),
-                                    .white.opacity(0.35),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                }
-                .shadow(color: .black.opacity(0.35), radius: 34, y: 14)
-        }
+                ),
+                lineWidth: 3
+            )
+            .blur(radius: 5)
     }
 }

@@ -54,9 +54,26 @@ struct TransferOrbView: View {
                 }
                 .frame(width: 150, height: 150)
 
+                // Gujarati animated transfer title
+                Text("જતું છે")
+                    .font(.system(size: 26, weight: .black, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.20, green: 0.90, blue: 1.00),
+                                Color.white,
+                                Color(red: 0.70, green: 0.40, blue: 1.00),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: Color(red: 0.20, green: 0.90, blue: 1.00).opacity(0.75), radius: 8)
+                    .scaleEffect(pulse ? 1.05 : 0.98)
+
                 Text(label)
                     .font(.caption)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.white.opacity(0.85))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 18)
             }

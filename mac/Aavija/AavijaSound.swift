@@ -3,10 +3,12 @@ import Foundation
 
 /// Aavija's sound effects.
 ///
-/// Three tiny synthesized WAVs ship in the app bundle:
+/// Five tiny synthesized WAVs ship in the app bundle:
 ///   - `capture`            camera-shutter click + glassy chime
 ///   - `transfer_start`     soft airy whoosh
 ///   - `transfer_complete`  warm two-note success chime
+///   - `eyes_close`         a soft downward "lid" sigh
+///   - `eyes_open`          a bright upward "wake" chime
 ///
 /// We keep several players alive so a fast screenshot followed by a transfer
 /// start doesn't cut the first sound off. Nothing here touches the network or
@@ -44,5 +46,15 @@ final class AavijaSound {
     /// A transfer finished successfully.
     func transferComplete() {
         play("transfer_complete", volume: 0.62)
+    }
+
+    /// The gesture eye closed: a hand grabbed.
+    func eyesClose() {
+        play("eyes_close", volume: 0.54)
+    }
+
+    /// The gesture eye opened: a hand released.
+    func eyesOpen() {
+        play("eyes_open", volume: 0.58)
     }
 }

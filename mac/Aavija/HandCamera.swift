@@ -128,8 +128,8 @@ private final class HandCameraWorker: NSObject, AVCaptureVideoDataOutputSampleBu
     var onEvent: (@Sendable (HandGestureMachine.EventType) -> Void)?
     var onError: (@Sendable (String) -> Void)?
 
-    private let videoQueue = DispatchQueue(label: "com.preet.aavija.hand-camera")
-    private let visionQueue = DispatchQueue(label: "com.preet.aavija.hand-vision")
+    private let videoQueue = DispatchQueue(label: "com.aartiq.aavija.hand-camera")
+    private let visionQueue = DispatchQueue(label: "com.aartiq.aavija.hand-vision")
     // `grabOnFirstFist` makes "hold an already-closed fist" count as a GRAB,
     // which is what triggers the screenshot. Without it the user would have to
     // open their hand first, then close it again.
