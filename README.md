@@ -6,8 +6,9 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
 - **Release** (closed fist -> open palm) drops it on the other device.
 - If both happen within ~10 seconds on two **paired** devices, the transfer starts.
 - **Grab on the Mac with nothing held** takes a screenshot instead — with a
-  Liquid Glass capture effect — and holds it. Release on the phone and the
-  screenshot is sent there.
+  Liquid Glass capture effect — and holds it. You can close your hand and hold
+  it, or raise an already-closed fist: no need to open first. Release on the
+  phone and the screenshot is sent there.
 - **A received photo opens by itself** in a full-screen viewer on the phone,
   with a spring-unfold entrance and a one-tap "Open in Photos" button.
 - **Custom sound effects** play on both platforms: a shutter + glass chime when

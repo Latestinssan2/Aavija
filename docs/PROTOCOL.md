@@ -170,6 +170,10 @@ file changes:
 - Android: CameraX + MediaPipe Hand Landmarker.
 - Mac: AVFoundation + Vision `VNDetectHumanHandPoseRequest`.
 - State machine `OPEN <-> FIST`, ~5-frame smoothing + minimum hold time.
+- A fist is also accepted as a GRAB when it is the first pose the Mac's camera
+  settles on (for example, a hand already closed when Gesture mode turns on).
+  That requires the same 4-of-5-frame agreement, so it is a hold, not a flicker.
+  Android keeps the stricter "must open first, then close" rule.
 - GRAB (open→fist) and RELEASE (fist→open) are matched **across the two
   devices**: one side grabs, the other releases, within **10 s**. Each event
   carries a monotonic id and an age measured on the sender's clock, so no clock

@@ -219,7 +219,7 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     } else {
-                        Text("No file held — GRAB captures your screen, then RELEASE on your phone to send it.")
+                        Text("No file held — GRAB (or hold a fist) to capture your screen, then RELEASE on your phone to send it.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)

@@ -130,7 +130,10 @@ private final class HandCameraWorker: NSObject, AVCaptureVideoDataOutputSampleBu
 
     private let videoQueue = DispatchQueue(label: "com.preet.aavija.hand-camera")
     private let visionQueue = DispatchQueue(label: "com.preet.aavija.hand-vision")
-    private let machine = HandGestureMachine()
+    // `grabOnFirstFist` makes "hold an already-closed fist" count as a GRAB,
+    // which is what triggers the screenshot. Without it the user would have to
+    // open their hand first, then close it again.
+    private let machine = HandGestureMachine(grabOnFirstFist: true)
 
     private var isConfigured = false
     private var lastFrameAt: Double = 0

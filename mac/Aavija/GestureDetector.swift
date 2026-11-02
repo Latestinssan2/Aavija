@@ -21,6 +21,12 @@ enum HandPose {
 /// emit on a real transition with a minimum hold time.
 ///
 /// GRAB = OPEN → FIST. RELEASE = FIST → OPEN.
+///
+/// On the Mac we ALSO treat a fist as a GRAB when it is the first pose the
+/// camera settles on. Without that, someone who raises an already-closed fist
+/// (or is still holding one when Gesture mode turns on) would have to open
+/// their hand first before the capture gesture works. The 5-frame window still
+/// has to agree, so this is a deliberate hold, not a single-frame flicker.
 final class HandGestureMachine {
     enum EventType {
         case grab, release
@@ -35,15 +41,25 @@ final class HandGestureMachine {
     private let windowSize: Int
     private let minStableFrames: Int
     private let minHoldSeconds: Double
+    private let grabOnFirstFist: Bool
 
     private var recent: [HandPose] = []
     private var pose: HandPose = .unknown
     private var lastEventAt: Double?
+    /// Has any pose settled since the last reset? Used to recognise a fist
+    /// that is already being held when the camera starts.
+    private var sawSettledPose = false
 
-    init(windowSize: Int = 5, minStableFrames: Int = 4, minHoldSeconds: Double = 0.5) {
+    init(
+        windowSize: Int = 5,
+        minStableFrames: Int = 4,
+        minHoldSeconds: Double = 0.5,
+        grabOnFirstFist: Bool = false
+    ) {
         self.windowSize = windowSize
         self.minStableFrames = minStableFrames
         self.minHoldSeconds = minHoldSeconds
+        self.grabOnFirstFist = grabOnFirstFist
     }
 
     /// The settled pose (after smoothing), for the UI.
@@ -54,6 +70,7 @@ final class HandGestureMachine {
         recent.removeAll()
         pose = .unknown
         lastEventAt = nil
+        sawSettledPose = false
     }
 
     /// Feed one analysed frame. Returns the event it caused, or nil.
@@ -74,7 +91,21 @@ final class HandGestureMachine {
             decided = .unknown
         }
 
-        guard decided != .unknown, decided != pose else { return nil }
+        guard decided != .unknown else { return nil }
+
+        // First settled pose. Normally it is just the starting point, with no
+        // event. On the Mac, `grabOnFirstFist` turns an already-closed fist into
+        // a GRAB so a screenshot can be taken without opening the hand first.
+        if !sawSettledPose {
+            sawSettledPose = true
+            pose = decided
+            guard decided == .fist, grabOnFirstFist else { return nil }
+            if let last = lastEventAt, now - last < minHoldSeconds { return nil }
+            lastEventAt = now
+            return Event(type: .grab, at: now)
+        }
+
+        guard decided != pose else { return nil }
 
         let previous = pose
         pose = decided
@@ -84,7 +115,6 @@ final class HandGestureMachine {
         case (.open, .fist): type = .grab
         case (.fist, .open): type = .release
         default:
-            // First-ever settled pose: no transition to report.
             return nil
         }
 
