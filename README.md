@@ -26,7 +26,10 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
    10-fps sampling, 5-frame smoothing, OPEN/FIST state machine, GRAB/RELEASE
    with a minimum hold time). ✅ (camera runs only while Gesture mode is ON,
    default OFF; no frames leave the device)
-6. Gesture detection on Mac (Vision).
+6. Gesture detection on Mac (AVFoundation + Vision human hand pose, same
+   10-fps sampling and 5-frame OPEN/FIST state machine as Android). ✅
+   (camera runs only while Gesture mode is ON, default OFF; no frames leave
+   the Mac)
 7. Connect gestures to transfers (10s grab/release window).
 8. Animation overlay (orb / particles / spring-unfold).
 9. Optional: Android foreground service, Mac background mode.

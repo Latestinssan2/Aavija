@@ -27,5 +27,10 @@
 	     create files under ~/Downloads, even though it's public. -->
 	<key>com.apple.security.files.downloads.read-write</key>
 	<true/>
+	<!-- camera: Phase 6 gesture detection. The sandbox blocks the camera unless
+	     this is granted; NSCameraUsageDescription in Info.plist is the other half
+	     of the consent prompt. -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>

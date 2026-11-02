@@ -40,6 +40,7 @@ targets:
         # Local Network privacy: without these, macOS 26/27 may silently
         # refuse Bonjour advertising instead of showing the consent prompt.
         NSLocalNetworkUsageDescription: "Aavija finds and shares files with your devices on this Wi-Fi."
+        NSCameraUsageDescription: "Aavija uses the camera to detect hand gestures. The camera runs only while Gesture mode is on; no video is recorded or sent."
         NSBonjourServices:
           - _gestureshare._tcp
           # Phase 5a: the Mac's OWN announcement, so a phone can list this

@@ -7,6 +7,7 @@ struct ContentView: View {
     // its @Published values change". The app owns the Browser + Connector.
     @ObservedObject var browser: Browser
     @ObservedObject var connector: Connector
+    @ObservedObject var gesture: GestureController
 
     var body: some View {
         VStack(spacing: 10) {
@@ -158,6 +159,50 @@ struct ContentView: View {
                         .multilineTextAlignment(.center)
                 }
 
+                // ---- Phase 6: gesture mode (OFF by default) ----------------
+                Divider()
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Gesture mode")
+                            .font(.caption)
+                        Text("Camera runs only while this is on")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { gesture.isEnabled },
+                        set: { gesture.setEnabled($0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                }
+
+                if gesture.isRunning {
+                    CameraPreviewView(session: gesture.session)
+                        .frame(height: 140)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    Text(gesture.poseHint)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    if let last = gesture.lastEventText {
+                        Text("Last gesture: \(last)")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                if let error = gesture.errorText {
+                    Text(error)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                }
+
                 Button("Unpair") {
                     connector.unpair()
                 }
@@ -174,5 +219,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(browser: Browser(), connector: Connector())
+    ContentView(browser: Browser(), connector: Connector(), gesture: GestureController())
 }

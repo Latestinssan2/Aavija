@@ -14,6 +14,10 @@ struct AavijaApp: App {
     @StateObject private var browser: Browser
     @StateObject private var connector: Connector
 
+    // Phase 6: gesture detection. Owned by the app (not the view) so turning
+    // the camera on/off does not depend on whether the panel is open.
+    @StateObject private var gesture = GestureController()
+
     // Phase 5a: announce this Mac on the Wi-Fi (name only — no listening
     // socket) so the phone can list us as an available device. Not a
     // StateObject because it publishes nothing the UI observes yet.
@@ -45,7 +49,7 @@ struct AavijaApp: App {
         // The `label` closure draws the tiny menu-bar item (Gujarati text);
         // the content closure is what appears when you click it.
         MenuBarExtra {
-            ContentView(browser: browser, connector: connector)
+            ContentView(browser: browser, connector: connector, gesture: gesture)
         } label: {
             // Text (not an image): macOS renders it sharp at any size and
             // auto-tints it white/black to match the menu bar appearance.

@@ -8,17 +8,21 @@
 
 /* Begin PBXBuildFile section */
 		08288A577CA1637E64D25502 /* MacAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */; };
+		1AF6F1FA6B70650A86CF0FA8 /* GestureDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A881117F45F0A2FCF5A8A97 /* GestureDetector.swift */; };
 		3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9F73B030AF09D953D88541 /* ContentView.swift */; };
 		3E60D9198555CCC29DEEB305 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C356DD276DA70E39BC3CFBC2 /* Pairing.swift */; };
 		753E8FE6857119FBFF5C63B4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 571CC738AB5B2F7F318FD6DF /* Assets.xcassets */; };
 		8EF875FB29B928AA4C39227F /* AavijaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F950ECC52E74D712B85ECC /* AavijaApp.swift */; };
+		CF19EC9AFC5294C377251AD4 /* HandCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0109BD22B66A3E45056543F3 /* HandCamera.swift */; };
 		E5337D063FE5188E09BCE73D /* FileReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BECFD9B47C4660B2821573C3 /* FileReceiver.swift */; };
 		EDC806FC7C701B2870BB7B88 /* Browser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DAC989855EAF1A0D3E5898 /* Browser.swift */; };
 		EE6F998F2182CBE972BEE6A0 /* Connector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D45A020BC700586810DA43 /* Connector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0109BD22B66A3E45056543F3 /* HandCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandCamera.swift; sourceTree = "<group>"; };
 		19DAC04FF4F64456D78ACE57 /* Aavija.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Aavija.entitlements; sourceTree = "<group>"; };
+		3A881117F45F0A2FCF5A8A97 /* GestureDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureDetector.swift; sourceTree = "<group>"; };
 		4E5B31A66AE1AA51448AFEE9 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		571CC738AB5B2F7F318FD6DF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		65F950ECC52E74D712B85ECC /* AavijaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AavijaApp.swift; sourceTree = "<group>"; };
@@ -58,6 +62,8 @@
 				74D45A020BC700586810DA43 /* Connector.swift */,
 				EB9F73B030AF09D953D88541 /* ContentView.swift */,
 				BECFD9B47C4660B2821573C3 /* FileReceiver.swift */,
+				3A881117F45F0A2FCF5A8A97 /* GestureDetector.swift */,
+				0109BD22B66A3E45056543F3 /* HandCamera.swift */,
 				4E5B31A66AE1AA51448AFEE9 /* Info.plist */,
 				E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */,
 				C356DD276DA70E39BC3CFBC2 /* Pairing.swift */,
@@ -137,6 +143,8 @@
 				EE6F998F2182CBE972BEE6A0 /* Connector.swift in Sources */,
 				3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */,
 				E5337D063FE5188E09BCE73D /* FileReceiver.swift in Sources */,
+				1AF6F1FA6B70650A86CF0FA8 /* GestureDetector.swift in Sources */,
+				CF19EC9AFC5294C377251AD4 /* HandCamera.swift in Sources */,
 				08288A577CA1637E64D25502 /* MacAdvertiser.swift in Sources */,
 				3E60D9198555CCC29DEEB305 /* Pairing.swift in Sources */,
 			);
