@@ -19,3 +19,9 @@ local.properties
 .idea/
 .cxx/
 captures/
+
+# Artifacts & Vercel
+release-artifacts/
+.vercel/
+web/.vercel/
+dist/

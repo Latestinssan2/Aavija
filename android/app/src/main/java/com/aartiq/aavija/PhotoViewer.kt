@@ -6,23 +6,23 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,7 +41,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -56,15 +55,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,8 +78,16 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * High-performance full-screen photo viewer with physics-based spring unfold,
- * ambient aurora backdrop, swipe-to-dismiss, and glassmorphic control pill.
+ * Full-screen edge-to-edge photo viewer without glowing borders.
+ *
+ * Supports:
+ * - Edge-to-edge full screen presentation (no card, no border)
+ * - Interactive multi-touch Pinch to Zoom (1x to 5x)
+ * - Two-finger and one-finger pan when zoomed in
+ * - Double-tap to zoom in / reset to 1x
+ * - Swipe down to dismiss when at 1x
+ * - Floating clean overlay UI on top: "આવતું છે ✨", "Open in Photos", and "Done"
+ * - Tap anywhere to toggle UI overlay controls
  */
 @Composable
 fun ReceivedPhotoViewer(
@@ -89,6 +96,11 @@ fun ReceivedPhotoViewer(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
 
     val bitmap by produceState<Bitmap?>(initialValue = null, image.uri) {
         value = withContext(Dispatchers.IO) {
@@ -96,14 +108,20 @@ fun ReceivedPhotoViewer(
         }
     }
 
-    // State for smooth entrance and exit animations
     var isVisible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        delay(30)
+        delay(20)
         isVisible = true
     }
 
-    // Interactive swipe down to dismiss
+    // Toggle controls visibility on single tap
+    var showControls by remember { mutableStateOf(true) }
+
+    // Pinch-to-zoom and pan state
+    var scale by remember { mutableFloatStateOf(1f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+
+    // Swipe down to dismiss state (active only when scale is 1x)
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     val animatedDragY = remember { Animatable(0f) }
 
@@ -111,7 +129,7 @@ fun ReceivedPhotoViewer(
         if (!isVisible) return
         isVisible = false
         scope.launch {
-            delay(240)
+            delay(200)
             onDismiss()
         }
     }
@@ -119,334 +137,251 @@ fun ReceivedPhotoViewer(
     val entranceProgress by animateFloatAsState(
         targetValue = if (isVisible) 1f else 0f,
         animationSpec = spring(
-            dampingRatio = 0.72f,
+            dampingRatio = 0.80f,
             stiffness = Spring.StiffnessMediumLow,
         ),
         label = "entrance-progress",
     )
 
     val backdropAlpha by animateFloatAsState(
-        targetValue = if (isVisible) 0.94f else 0f,
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        targetValue = if (isVisible) 1f else 0f,
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "backdrop-alpha",
     )
 
-    val motion = rememberInfiniteTransition(label = "viewer-aurora")
-    val sheenProgress by motion.animateFloat(
-        initialValue = -0.5f,
-        targetValue = 1.5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3_200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "sheen-sweep",
-    )
-    val auroraGlow by motion.animateFloat(
-        initialValue = 0.5f,
-        targetValue = 0.9f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2_400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "aurora-pulse",
-    )
-
-    val dragScale = (1f - (dragOffsetY / 1200f).coerceIn(0f, 0.25f))
-    val currentScale = (0.75f + 0.25f * entranceProgress) * dragScale
-    val currentTranslationY = (1f - entranceProgress) * 120f + dragOffsetY
+    val dragScale = (1f - (dragOffsetY / 1400f).coerceIn(0f, 0.20f))
+    val currentTranslationY = (1f - entranceProgress) * 80f + dragOffsetY
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = backdropAlpha))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = { triggerDismiss() },
-            ),
+            .background(Color.Black.copy(alpha = backdropAlpha)),
         contentAlignment = Alignment.Center,
     ) {
-        // Living aurora glow backdrop
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val centerTop = Offset(size.width * 0.25f, size.height * 0.20f)
-            val centerBottom = Offset(size.width * 0.75f, size.height * 0.75f)
-
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF00E5FF).copy(alpha = 0.22f * auroraGlow * backdropAlpha),
-                        Color.Transparent,
-                    ),
-                    center = centerTop,
-                    radius = size.minDimension * 0.65f,
-                ),
-                radius = size.minDimension * 0.65f,
-                center = centerTop,
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF7C4DFF).copy(alpha = 0.25f * auroraGlow * backdropAlpha),
-                        Color.Transparent,
-                    ),
-                    center = centerBottom,
-                    radius = size.minDimension * 0.70f,
-                ),
-                radius = size.minDimension * 0.70f,
-                center = centerBottom,
-            )
-        }
-
-        Column(
+        // Full screen edge-to-edge photograph with pinch, zoom, and pan
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // Drag handle pill at the top
-            Box(
-                modifier = Modifier
-                    .width(42.dp)
-                    .height(5.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.40f * entranceProgress)),
-            )
-
-            Spacer(Modifier.height(14.dp))
-
-            // Main Photo Card
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .offset { IntOffset(0, currentTranslationY.roundToInt()) }
-                    .graphicsLayer {
-                        scaleX = currentScale
-                        scaleY = currentScale
-                        alpha = entranceProgress.coerceIn(0f, 1f)
-                    }
-                    .shadow(
-                        elevation = 24.dp,
-                        shape = RoundedCornerShape(28.dp),
-                        spotColor = Color(0xFF00E5FF).copy(alpha = 0.35f),
-                        ambientColor = Color(0xFF7C4DFF).copy(alpha = 0.25f),
+                .offset { IntOffset(0, currentTranslationY.roundToInt()) }
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = { tapOffset ->
+                            if (scale > 1.2f) {
+                                scale = 1f
+                                panOffset = Offset.Zero
+                            } else {
+                                scale = 2.5f
+                                val maxX = (screenWidthPx * 1.5f) / 2f
+                                val maxY = (screenHeightPx * 1.5f) / 2f
+                                panOffset = Offset(
+                                    x = ((screenWidthPx / 2f - tapOffset.x) * 1.5f).coerceIn(-maxX, maxX),
+                                    y = ((screenHeightPx / 2f - tapOffset.y) * 1.5f).coerceIn(-maxY, maxY),
+                                )
+                            }
+                        },
+                        onTap = {
+                            showControls = !showControls
+                        },
                     )
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(Color(0xFF0D121D))
-                    .border(
-                        width = 1.5.dp,
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.65f),
-                                Color(0xFF00E5FF).copy(alpha = 0.45f),
-                                Color(0xFF7C4DFF).copy(alpha = 0.35f),
-                                Color.White.copy(alpha = 0.15f),
-                            ),
-                        ),
-                        shape = RoundedCornerShape(28.dp),
-                    )
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragEnd = {
-                                if (dragOffsetY > 130f) {
+                }
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        val newScale = (scale * zoom).coerceIn(1f, 5f)
+                        scale = newScale
+
+                        if (newScale > 1.05f) {
+                            // Pan while zoomed
+                            val maxX = (screenWidthPx * (newScale - 1f)) / 2f
+                            val maxY = (screenHeightPx * (newScale - 1f)) / 2f
+                            panOffset = Offset(
+                                x = (panOffset.x + pan.x).coerceIn(-maxX, maxX),
+                                y = (panOffset.y + pan.y).coerceIn(-maxY, maxY),
+                            )
+                        } else {
+                            panOffset = Offset.Zero
+                            // Vertical pull down to dismiss when at 1x
+                            if (pan.y > 0 || dragOffsetY > 0) {
+                                dragOffsetY = (dragOffsetY + pan.y * 0.85f).coerceAtLeast(0f)
+                                if (dragOffsetY > 160f) {
                                     triggerDismiss()
-                                } else {
-                                    scope.launch {
-                                        animatedDragY.snapTo(dragOffsetY)
-                                        animatedDragY.animateTo(
-                                            targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = 0.75f,
-                                                stiffness = Spring.StiffnessMedium,
-                                            ),
-                                        ) {
-                                            dragOffsetY = value
-                                        }
-                                    }
                                 }
-                            },
-                            onDragCancel = {
-                                dragOffsetY = 0f
-                            },
-                            onDrag = { _, dragAmount ->
-                                if (dragAmount.y > 0 || dragOffsetY > 0) {
-                                    dragOffsetY = (dragOffsetY + dragAmount.y * 0.85f).coerceAtLeast(0f)
-                                }
-                            },
-                        )
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap!!.asImageBitmap(),
-                        contentDescription = image.name,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(3.dp)
-                            .clip(RoundedCornerShape(25.dp)),
-                    )
-                } else {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color(0xFF00E5FF),
-                            strokeWidth = 2.5.dp,
-                            modifier = Modifier.size(36.dp),
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        Text(
-                            "Unfolding screenshot…",
-                            color = Color.White.copy(alpha = 0.75f),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
+                            }
+                        }
                     }
                 }
-
-                // Modern Specular glass sweep across the photograph
-                Canvas(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .clip(RoundedCornerShape(28.dp)),
+                .graphicsLayer {
+                    scaleX = scale * dragScale * (0.85f + 0.15f * entranceProgress)
+                    scaleY = scale * dragScale * (0.85f + 0.15f * entranceProgress)
+                    translationX = panOffset.x
+                    translationY = panOffset.y
+                    alpha = entranceProgress.coerceIn(0f, 1f)
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = image.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
                 ) {
-                    val x = size.width * sheenProgress
-                    drawRect(
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.White.copy(alpha = 0.08f),
-                                Color.White.copy(alpha = 0.32f),
-                                Color.White.copy(alpha = 0.08f),
-                                Color.Transparent,
-                            ),
-                            start = Offset(x - size.width * 0.25f, 0f),
-                            end = Offset(x + size.width * 0.25f, size.height),
-                        ),
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(36.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Loading screenshot…",
+                        color = Color.White.copy(alpha = 0.80f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
             }
+        }
 
-            Spacer(Modifier.height(18.dp))
+        // Floating UI Controls on top of the image
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(tween(180)) + slideInVertically(initialOffsetY = { -it / 2 }),
+            exit = fadeOut(tween(150)) + slideOutVertically(targetOffsetY = { -it / 2 }),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 28.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Gujarati Arrival Pill: "આવતું છે ✨"
+                Surface(
+                    color = Color.Black.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "આવતું છે ✨",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            letterSpacing = 0.5.sp,
+                        )
+                    }
+                }
 
-            // Details and actions
+                // Quick Close Circle Button ("✕")
+                Surface(
+                    color = Color.Black.copy(alpha = 0.65f),
+                    shape = CircleShape,
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { triggerDismiss() },
+                        ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "✕",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                    }
+                }
+            }
+        }
+
+        // Bottom Floating Action Pill on top of the image
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(tween(180)) + slideInVertically(initialOffsetY = { it / 2 }),
+            exit = fadeOut(tween(150)) + slideOutVertically(targetOffsetY = { it / 2 }),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .graphicsLayer {
-                        alpha = entranceProgress.coerceIn(0f, 1f)
-                        translationY = (1f - entranceProgress) * 40f
-                    },
+                    .padding(horizontal = 20.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Glowing Gujarati arrival pill
                 Surface(
-                    color = Color(0xFF00E5FF).copy(alpha = 0.16f),
-                    shape = RoundedCornerShape(12.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.45f)),
-                    modifier = Modifier.padding(bottom = 8.dp),
+                    color = Color.Black.copy(alpha = 0.75f),
+                    shape = RoundedCornerShape(26.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        text = "આવતું છે ✨",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF00E5FF),
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    )
-                }
-
-                Text(
-                    image.name,
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF10B981)),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        "Saved to ${ReceivedFiles.DISPLAY_FOLDER}",
-                        color = Color.White.copy(alpha = 0.65f),
-                        fontSize = 13.sp,
-                    )
-                }
-
-                Spacer(Modifier.height(18.dp))
-
-                // Bottom floating action capsule
-                Surface(
-                    color = Color(0xFF1B2232).copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(22.dp),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        Color.White.copy(alpha = 0.12f),
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth(0.92f)
-                        .height(56.dp)
-                        .shadow(12.dp, RoundedCornerShape(22.dp)),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Button(
-                            onClick = { openInGallery(context, image.uri) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF00E5FF),
-                                contentColor = Color.Black,
-                            ),
-                        ) {
-                            Text(
-                                "Open in Photos",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
+                        // Image details
+                        Text(
+                            image.name,
+                            color = Color.White.copy(alpha = 0.90f),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                        )
 
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.height(10.dp))
 
-                        OutlinedButton(
-                            onClick = { triggerDismiss() },
-                            modifier = Modifier
-                                .weight(0.7f)
-                                .height(44.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = Color.White,
-                            ),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                Color.White.copy(alpha = 0.20f),
-                            ),
+                        // Action Buttons: "Open in Photos" and "Done"
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            Text(
-                                "Done",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
+                            Button(
+                                onClick = { openInGallery(context, image.uri) },
+                                modifier = Modifier
+                                    .weight(1.3f)
+                                    .height(46.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.White,
+                                    contentColor = Color.Black,
+                                ),
+                            ) {
+                                Text(
+                                    "Open in Photos",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+
+                            Button(
+                                onClick = { triggerDismiss() },
+                                modifier = Modifier
+                                    .weight(0.8f)
+                                    .height(46.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color.White.copy(alpha = 0.16f),
+                                    contentColor = Color.White,
+                                ),
+                            ) {
+                                Text(
+                                    "Done",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         }
                     }
                 }
