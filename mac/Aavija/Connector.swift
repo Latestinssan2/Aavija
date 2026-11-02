@@ -657,6 +657,7 @@ final class Connector: ObservableObject {
                 captureError = nil
 
                 CaptureEffectPanel.shared.show(caption: "Screenshot captured")
+                AavijaSound.shared.screenshot()
                 transferStatus =
                     "Screenshot captured — RELEASE on your phone within 10 s."
 
@@ -708,6 +709,7 @@ final class Connector: ObservableObject {
         guard let endpoint = pollEndpoint, let token = store.sessionToken else { return }
         isFetching = true
         isTransferring = true
+        AavijaSound.shared.transferStart()
         let tlsOptions = NWProtocolTLS.Options()
         sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, _, c in c(true) }, .main)
         let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
@@ -814,6 +816,7 @@ final class Connector: ObservableObject {
                         switch res {
                         case .ok(let path):
                             self.transferStatus = "Saved \(header.filename) to \(path)"
+                            AavijaSound.shared.transferComplete()
                         case .failed(let reason):
                             self.transferStatus = "Received \(header.filename) but failed: \(reason)"
                         }
@@ -1238,6 +1241,7 @@ final class Connector: ObservableObject {
         sendingSHA = sha256
         transferStatus = "Sending \(name)…"
         isTransferring = true
+        AavijaSound.shared.transferStart()
         state = .connecting
 
         let tlsOptions = NWProtocolTLS.Options()
@@ -1399,6 +1403,7 @@ final class Connector: ObservableObject {
                 switch obj["type"] as? String ?? "" {
                 case "received":
                     self.transferStatus = "Sent \(self.sendingName ?? "file") ✓"
+                    AavijaSound.shared.transferComplete()
                     // A held file has been delivered; don't keep its bytes in
                     // memory or offer it to a later gesture.
                     if self.stagedFile?.name == self.sendingName {

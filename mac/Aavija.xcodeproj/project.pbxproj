@@ -10,6 +10,8 @@
 		069F55B1544E7B8EABBC0D12 /* MacScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A4B3607BCF8042F96FE7DE /* MacScreenshot.swift */; };
 		08288A577CA1637E64D25502 /* MacAdvertiser.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */; };
 		1AF6F1FA6B70650A86CF0FA8 /* GestureDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A881117F45F0A2FCF5A8A97 /* GestureDetector.swift */; };
+		218732851168638D76D0F1A5 /* capture.wav in Resources */ = {isa = PBXBuildFile; fileRef = 68A0B1E5EE874A7FE6020F75 /* capture.wav */; };
+		38749B88108B0D5CA3EE82FB /* transfer_start.wav in Resources */ = {isa = PBXBuildFile; fileRef = DF84D07AFE1DAAFB9E1D2A55 /* transfer_start.wav */; };
 		3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9F73B030AF09D953D88541 /* ContentView.swift */; };
 		3E60D9198555CCC29DEEB305 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = C356DD276DA70E39BC3CFBC2 /* Pairing.swift */; };
 		753E8FE6857119FBFF5C63B4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 571CC738AB5B2F7F318FD6DF /* Assets.xcassets */; };
@@ -17,8 +19,10 @@
 		8EF875FB29B928AA4C39227F /* AavijaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F950ECC52E74D712B85ECC /* AavijaApp.swift */; };
 		BC3542EF73B63A034C907E81 /* TransferOrbView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 981D4541A5E98B7026F8C4CE /* TransferOrbView.swift */; };
 		CF19EC9AFC5294C377251AD4 /* HandCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0109BD22B66A3E45056543F3 /* HandCamera.swift */; };
+		D3944AF25760514FD440FF24 /* AavijaSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC32A32EA69CAD7831B87BC9 /* AavijaSound.swift */; };
 		D7D8D1B43D1CD275B5114471 /* LiquidGlassCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD7A4D895FF68F07B0F5F396 /* LiquidGlassCapture.swift */; };
 		E5337D063FE5188E09BCE73D /* FileReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = BECFD9B47C4660B2821573C3 /* FileReceiver.swift */; };
+		E6A1BE7F377FF19E7C1F2C8D /* transfer_complete.wav in Resources */ = {isa = PBXBuildFile; fileRef = 960B43B4D14B74045C6805EA /* transfer_complete.wav */; };
 		EDC806FC7C701B2870BB7B88 /* Browser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9DAC989855EAF1A0D3E5898 /* Browser.swift */; };
 		EE6F998F2182CBE972BEE6A0 /* Connector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D45A020BC700586810DA43 /* Connector.swift */; };
 /* End PBXBuildFile section */
@@ -30,14 +34,18 @@
 		4E5B31A66AE1AA51448AFEE9 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		571CC738AB5B2F7F318FD6DF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		65F950ECC52E74D712B85ECC /* AavijaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AavijaApp.swift; sourceTree = "<group>"; };
+		68A0B1E5EE874A7FE6020F75 /* capture.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = capture.wav; sourceTree = "<group>"; };
 		74D45A020BC700586810DA43 /* Connector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Connector.swift; sourceTree = "<group>"; };
 		7654A2412D6F8CDD738A540E /* Aavija.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Aavija.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		960B43B4D14B74045C6805EA /* transfer_complete.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = transfer_complete.wav; sourceTree = "<group>"; };
 		981D4541A5E98B7026F8C4CE /* TransferOrbView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferOrbView.swift; sourceTree = "<group>"; };
+		BC32A32EA69CAD7831B87BC9 /* AavijaSound.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AavijaSound.swift; sourceTree = "<group>"; };
 		BECFD9B47C4660B2821573C3 /* FileReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileReceiver.swift; sourceTree = "<group>"; };
 		C356DD276DA70E39BC3CFBC2 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		CB8EED84DE86F23DAE093D6B /* GestureMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GestureMatcher.swift; sourceTree = "<group>"; };
 		D4A4B3607BCF8042F96FE7DE /* MacScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScreenshot.swift; sourceTree = "<group>"; };
 		D9DAC989855EAF1A0D3E5898 /* Browser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Browser.swift; sourceTree = "<group>"; };
+		DF84D07AFE1DAAFB9E1D2A55 /* transfer_start.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = transfer_start.wav; sourceTree = "<group>"; };
 		E4D9D102A9FECCF8A3ACA768 /* MacAdvertiser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAdvertiser.swift; sourceTree = "<group>"; };
 		EB9F73B030AF09D953D88541 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		FD7A4D895FF68F07B0F5F396 /* LiquidGlassCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassCapture.swift; sourceTree = "<group>"; };
@@ -65,6 +73,7 @@
 			children = (
 				19DAC04FF4F64456D78ACE57 /* Aavija.entitlements */,
 				65F950ECC52E74D712B85ECC /* AavijaApp.swift */,
+				BC32A32EA69CAD7831B87BC9 /* AavijaSound.swift */,
 				571CC738AB5B2F7F318FD6DF /* Assets.xcassets */,
 				D9DAC989855EAF1A0D3E5898 /* Browser.swift */,
 				74D45A020BC700586810DA43 /* Connector.swift */,
@@ -79,8 +88,19 @@
 				D4A4B3607BCF8042F96FE7DE /* MacScreenshot.swift */,
 				C356DD276DA70E39BC3CFBC2 /* Pairing.swift */,
 				981D4541A5E98B7026F8C4CE /* TransferOrbView.swift */,
+				8B230DD906265D788EFF1BEA /* Sounds */,
 			);
 			path = Aavija;
+			sourceTree = "<group>";
+		};
+		8B230DD906265D788EFF1BEA /* Sounds */ = {
+			isa = PBXGroup;
+			children = (
+				68A0B1E5EE874A7FE6020F75 /* capture.wav */,
+				960B43B4D14B74045C6805EA /* transfer_complete.wav */,
+				DF84D07AFE1DAAFB9E1D2A55 /* transfer_start.wav */,
+			);
+			path = Sounds;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -140,6 +160,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				753E8FE6857119FBFF5C63B4 /* Assets.xcassets in Resources */,
+				218732851168638D76D0F1A5 /* capture.wav in Resources */,
+				E6A1BE7F377FF19E7C1F2C8D /* transfer_complete.wav in Resources */,
+				38749B88108B0D5CA3EE82FB /* transfer_start.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -151,6 +174,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8EF875FB29B928AA4C39227F /* AavijaApp.swift in Sources */,
+				D3944AF25760514FD440FF24 /* AavijaSound.swift in Sources */,
 				EDC806FC7C701B2870BB7B88 /* Browser.swift in Sources */,
 				EE6F998F2182CBE972BEE6A0 /* Connector.swift in Sources */,
 				3CEFFCF919ADFFABD2AE6FAF /* ContentView.swift in Sources */,

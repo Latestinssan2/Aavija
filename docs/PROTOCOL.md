@@ -193,6 +193,9 @@ file changes:
   in-app full-screen viewer. That is presentation only: the verified file is
   still saved to Downloads/GestureShare exactly as before. Non-images are saved
   silently and are not opened.
+- Sound effects (capture shutter, transfer start whoosh, success chime) are
+  played locally from bundled WAVs. They add no wire messages and no state:
+  muting a device has no effect on the protocol.
 - A gesture never bypasses authentication: it only changes WHEN an already
   authorized transfer starts.
 - Unmatched gestures simply expire; a late release does nothing.

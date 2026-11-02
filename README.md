@@ -10,6 +10,9 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
   screenshot is sent there.
 - **A received photo opens by itself** in a full-screen viewer on the phone,
   with a spring-unfold entrance and a one-tap "Open in Photos" button.
+- **Custom sound effects** play on both platforms: a shutter + glass chime when
+  the Mac captures the screen, an airy whoosh when a transfer starts, and a
+  warm two-note chime when it finishes successfully.
 
 ## Layout
 
@@ -47,6 +50,8 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
      on macOS 26+).
    - On the phone, a received image opens immediately in an in-app viewer with
      a spring/unfold animation; the file still lands in Downloads/GestureShare.
+   - Synthesized sound effects (bundled WAVs, no downloads): capture shutter +
+     glass chime, transfer whoosh, and success chime.
 8. Animation overlay (orb / particles / spring-unfold). ✅
    - Both platforms show a self-contained orb with orbiting particles, only
      while bytes are actually moving. No images or external animation library.

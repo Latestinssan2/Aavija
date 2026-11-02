@@ -483,6 +483,7 @@ class BonjourAdvertiser(private val context: Context) {
             transferFailed = false,
             transferStatus = "Receiving ${header.filename}…",
         )
+        AavijaSounds.transferStart()
 
         val sink = try {
             ReceivedFiles.open(context, header.filename)
@@ -511,6 +512,7 @@ class BonjourAdvertiser(private val context: Context) {
                 // Screenshot sharing: a received image opens by itself in the new viewer.
                 // The event id is what tells the UI this is a NEW photo rather
                 // than the same one coming back on a recomposition.
+                AavijaSounds.transferComplete()
                 if (savedUri != null && ReceivedFiles.isImageFile(header.filename)) {
                     _state.value = saved.copy(
                         receivedImage = ReceivedImage(
@@ -559,6 +561,7 @@ class BonjourAdvertiser(private val context: Context) {
             transferFailed = false,
             transferStatus = "Sending ${file.name}…",
         )
+        AavijaSounds.transferStart()
         // Send header
         val header = JSONObject()
             .put("type", "file")
@@ -581,6 +584,7 @@ class BonjourAdvertiser(private val context: Context) {
             // line can race a closed socket. Never let that turn a good transfer
             // into a "failed" row on the phone.
             runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "received").toString()) }
+            AavijaSounds.transferComplete()
             _state.value = _state.value.copy(
                 isSending = false,
                 transferFailed = false,
