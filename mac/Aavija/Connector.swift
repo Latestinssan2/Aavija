@@ -43,6 +43,10 @@ final class Connector: ObservableObject {
     /// Copy the file we're sending so later steps can name it in the result.
     private var sendingName: String?
 
+    /// Phase 4b: true while a pull from the phone is in flight, so the 3-second
+    /// heartbeat can't start a second one on top of it.
+    private var isFetching = false
+
     /// Have we successfully paired with some phone?
     @Published private(set) var isPaired: Bool
 
@@ -359,12 +363,18 @@ final class Connector: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let ok: Bool
+                var outgoing = 0
                 if let line, let obj = Self.decodeObject(line) {
                     ok = (obj["type"] as? String) == "pong"
+                    if let o = obj["outgoing"] as? Int {
+                        outgoing = o
+                    } else if let o = obj["outgoing"] as? NSNumber {
+                        outgoing = o.intValue
+                    }
                 } else {
                     ok = false
                 }
-                self.finishHeartbeat(connection, reachable: ok)
+                self.finishHeartbeat(connection, reachable: ok, hasOutgoing: outgoing > 0)
             }
         }
     }
@@ -372,12 +382,153 @@ final class Connector: ObservableObject {
     /// One attempt is over. Whoever gets here first (the answer or the
     /// watchdog) clears `heartbeatConnection`, so the other one stands down and
     /// we never schedule two loops.
-    private func finishHeartbeat(_ connection: NWConnection, reachable: Bool) {
+    private func finishHeartbeat(_ connection: NWConnection, reachable: Bool, hasOutgoing: Bool = false) {
         guard heartbeatConnection === connection else { return }
         heartbeatConnection = nil
         connection.cancel()
         isReachable = reachable
         scheduleNextHeartbeat()
+        if reachable && hasOutgoing {
+            // The phone has a file waiting. Pull it now.
+            Task { @MainActor in
+                self.fetchOutgoingFile()
+            }
+        }
+    }
+
+    // MARK: - Phase 4b: fetch a file from the paired phone (phone → Mac)
+    private final class DataBox: @unchecked Sendable {
+        var data = Data()
+    }
+
+    private func fetchOutgoingFile() {
+        // The heartbeat runs every ~3 s. Without this guard a slow transfer
+        // would start a second (third, …) pull on top of itself.
+        guard !isFetching else { return }
+        guard let endpoint = pollEndpoint, let token = store.sessionToken else { return }
+        isFetching = true
+        let tlsOptions = NWProtocolTLS.Options()
+        sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, _, c in c(true) }, .main)
+        let connection = NWConnection(to: endpoint, using: NWParameters(tls: tlsOptions))
+        connection.stateUpdateHandler = { [weak self] nwState in
+            MainActor.assumeIsolated {
+                switch nwState {
+                case .ready:
+                    self?.runFetch(on: connection, token: token)
+                case .cancelled, .failed:
+                    self?.isFetching = false
+                default:
+                    break
+                }
+            }
+        }
+        connection.start(queue: .main)
+    }
+
+    /// Every exit from a pull funnels through here, so one bad attempt can never
+    /// wedge the queue as "always fetching".
+    private func finishFetch(on connection: NWConnection) {
+        isFetching = false
+        connection.cancel()
+    }
+
+    private func runFetch(on connection: NWConnection, token: Data) {
+        readLine(on: connection) { [weak self] challengeLine in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard challengeLine != nil else {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                guard let line = Self.encodeLine(AuthMessage(token: Pairing.hex(token))) else {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                connection.send(content: Data((line + "\n").utf8), completion: .contentProcessed { _ in
+                    MainActor.assumeIsolated {
+                        self.readFetchAuth(on: connection)
+                    }
+                })
+            }
+        }
+    }
+
+    private func readFetchAuth(on connection: NWConnection) {
+        readLine(on: connection) { [weak self] line in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard let line, let obj = Self.decodeObject(line),
+                      (obj["type"] as? String) == "authenticated" else {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                guard let rl = Self.encodeLine(ReceiveRequestMsg()) else {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                connection.send(content: Data((rl + "\n").utf8), completion: .contentProcessed { _ in
+                    MainActor.assumeIsolated {
+                        self.readFetchResponse(on: connection)
+                    }
+                })
+            }
+        }
+    }
+
+    private func readFetchResponse(on connection: NWConnection) {
+        readLine(on: connection) { [weak self] line in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard let line else {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                if let obj = Self.decodeObject(line), (obj["type"] as? String) == "idle" {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                guard let hdr = try? JSONDecoder().decode(FileHeaderRecv.self, from: Data(line.utf8)) else {
+                    self.finishFetch(on: connection)
+                    return
+                }
+                self.readFetchBody(on: connection, header: hdr)
+            }
+        }
+    }
+
+    private func readFetchBody(on connection: NWConnection, header: FileHeaderRecv) {
+        self.transferStatus = "Receiving \(header.filename)…"
+        let box = DataBox()
+        func recvMore() {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
+                MainActor.assumeIsolated {
+                    if let data = data {
+                        box.data.append(data)
+                    }
+                    if box.data.count >= header.size {
+                        let payload = box.data.prefix(header.size)
+                        let res = FileReceiver.write(name: header.filename, size: header.size, sha256: header.sha256, data: Data(payload))
+                        switch res {
+                        case .ok(let path):
+                            self.transferStatus = "Saved \(header.filename) to \(path)"
+                        case .failed(let reason):
+                            self.transferStatus = "Received \(header.filename) but failed: \(reason)"
+                        }
+                        self.finishFetch(on: connection)
+                        return
+                    }
+                    if isComplete || error != nil {
+                        // The phone closed early. Say so instead of leaving the
+                        // panel stuck on "Receiving…" forever.
+                        self.transferStatus = "Transfer of \(header.filename) was cut short."
+                        self.finishFetch(on: connection)
+                        return
+                    }
+                    recvMore()
+                }
+            }
+        }
+        recvMore()
     }
 
     init(store: PairingStore = PairingStore()) {
@@ -865,8 +1016,14 @@ final class Connector: ObservableObject {
 
     /// Send the header line (name, size, hash) then the bytes themselves.
     private func sendBody(data: Data, on connection: NWConnection) {
+        struct FileHeaderSend: Encodable {
+            let type = "file"
+            let filename: String
+            let size: Int
+            let sha256: String
+        }
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        let header = FileHeader(
+        let header = FileHeaderSend(
             filename: sendingName ?? "file",
             size: data.count,
             sha256: sha
@@ -1029,10 +1186,14 @@ private struct PingMessage: Encodable {
     let type = "ping"
 }
 
-/// Phase 4a: the file's name, byte count, and SHA-256 (hex), sent as one line
-/// immediately before the raw bytes.
-private struct FileHeader: Encodable {
-    let type = "file"
+/// Phase 4b: ask the phone to send any queued file to us.
+private struct ReceiveRequestMsg: Encodable {
+    let type = "receive"
+}
+
+/// Phase 4b: the phone replies with a file header when sending to us.
+private struct FileHeaderRecv: Decodable {
+    let type: String
     let filename: String
     let size: Int
     let sha256: String

@@ -22,5 +22,10 @@
 	     Read-only is all we need: we never modify the user's files on the Mac. -->
 	<key>com.apple.security.files.user-selected.read-only</key>
 	<true/>
+	<!-- downloads.read-write: needed to AUTOMATICALLY save received files into
+	     the user's Downloads folder (phase 4b, phone → Mac). Without it, we can't
+	     create files under ~/Downloads, even though it's public. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
 </dict>
 </plist>

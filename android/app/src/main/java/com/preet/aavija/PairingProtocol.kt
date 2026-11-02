@@ -102,16 +102,12 @@ class PairingProtocol(
     }
 
     /**
-     * A HEARTBEAT: the Mac checking that the link is alive (bugfix after Phase 4a).
+     * A HEARTBEAT: the Mac checking that the link is alive (Phase 4b).
      *
-     * It carries no data, verifies nothing, changes no state, and burns no
-     * attempt — it exists purely so the Mac can tell "connected" from
-     * "disconnected" honestly. Without it the Mac showed "Paired ✓" forever,
-     * even with the phone's Wi-Fi off, because a remembered pairing is trust,
-     * not a live connection.
+     * Returns pong with outgoing file count, so the Mac can pull files if needed.
      */
     private fun handlePing(): String =
-        JSONObject().put("type", "pong").toString()
+        JSONObject().put("type", "pong").put("outgoing", outgoingCount()).toString()
 
     /**
      * "Did the user tap MY name on the phone?" — the Mac asking (Phase 5b).
@@ -210,6 +206,13 @@ class PairingProtocol(
         } else {
             reject("unknown token")
         }
+    }
+
+    private var outgoingCount: () -> Int = { 0 }
+
+    /** Allow caller to tell us how many files are queued to send to Mac (Phase 4b). */
+    fun setOutgoingCountProvider(provider: () -> Int) {
+        outgoingCount = provider
     }
 
     private fun reject(reason: String): String =

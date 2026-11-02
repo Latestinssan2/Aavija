@@ -153,6 +153,21 @@ class PairingProtocolTest {
     }
 
     @Test
+    fun `pong reports the outgoing queue length`() {
+        // Phase 4b: the Mac only knows to pull a file because pong says how many
+        // are waiting. Zero must still be present — "no field" and "no files"
+        // are different things on the wire.
+        val p = proto("482913")
+        var queued = 0
+        p.setOutgoingCountProvider { queued }
+        assertEquals(0, JSONObject(p.handle(JSONObject().put("type", "ping").toString())).getInt("outgoing"))
+        queued = 3
+        assertEquals(3, JSONObject(p.handle(JSONObject().put("type", "ping").toString())).getInt("outgoing"))
+        // A ping still never counts as a PIN attempt.
+        assertEquals("paired", JSONObject(p.handle(pairJson(proofHex("482913")))).getString("type"))
+    }
+
+    @Test
     fun `a ping burns no pin attempt`() {
         val p = proto("482913")
         repeat(20) { p.handle(JSONObject().put("type", "ping").toString()) }

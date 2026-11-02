@@ -16,11 +16,14 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
 
 ## Phases
 
-1. Menu-bar app advertises over Bonjour; Android discovers it.
-2. Pairing (6-digit PIN, certificate fingerprints stored both sides).
-3. Button-based file transfer with SHA-256 verification.
-4. Gesture detection on Android (log only, no networking).
-5. Gesture detection on Mac (Vision).
-6. Connect gestures to transfers (10s grab/release window).
-7. Animation overlay (orb / particles / spring-unfold).
-8. Optional: Android foreground service, Mac background mode.
+1. Menu-bar app advertises over Bonjour; Android discovers it. ✅
+2. Pairing (6-digit PIN, certificate fingerprints stored both sides). ✅
+3. Discovery of Macs on the phone + tap-to-pair flow. ✅
+4. Button-based file transfer with SHA-256 verification:
+   Mac → phone ✅, phone → Mac ✅ (`~/Downloads/GestureShare` on the Mac,
+   `Downloads/GestureShare` on the phone).
+5. Gesture detection on Android (log only, no networking).
+6. Gesture detection on Mac (Vision).
+7. Connect gestures to transfers (10s grab/release window).
+8. Animation overlay (orb / particles / spring-unfold).
+9. Optional: Android foreground service, Mac background mode.

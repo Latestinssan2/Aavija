@@ -1,10 +1,14 @@
 package com.preet.aavija
 
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.provider.OpenableColumns
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -155,6 +159,23 @@ class BonjourAdvertiser(private val context: Context) {
     private var serverSocket: ServerSocket? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private val outgoingQueue = OutgoingQueue()
+
+    fun queueOutgoingFile(uri: Uri, name: String, size: Long, sha256Hex: String) {
+        if (size > 200L * 1024L * 1024L) {
+            _state.value = _state.value.copy(transferFailed = true, transferStatus = "File too large (max 200 MB).")
+            return
+        }
+        outgoingQueue.enqueue(OutgoingFile(uri, name, size, sha256Hex))
+        _state.value = _state.value.copy(transferFailed = false, transferStatus = "Ready to send $name — waiting for the Mac")
+    }
+
+    /** Let the UI report a read/pick failure (e.g. hashing couldn't open the stream). */
+    fun reportOutgoingProblem(msg: String) {
+        _state.value = _state.value.copy(transferFailed = true, transferStatus = msg)
+    }
+
+    fun outgoingCount(): Int = outgoingQueue.count()
 
     /** Open the port and announce it. Safe to call once from onCreate. */
     fun start() {
@@ -322,6 +343,7 @@ class BonjourAdvertiser(private val context: Context) {
             pinSubmitted = ::isPinSubmitted,
             typedPin = { _typedPin.value },
         )
+        protocol.setOutgoingCountProvider { outgoingQueue.count() }
 
         // 1) Send the challenge so the Mac can build its proof.
         FileTransfer.writeLine(output, protocol.challengeLine())
@@ -368,11 +390,18 @@ class BonjourAdvertiser(private val context: Context) {
             return
         }
         Log.i(TAG, "File header: $headerLine")
+        // Try to parse; might be a request to receive (phone->Mac) rather than a file header?
+        val obj = try { JSONObject(headerLine) } catch (_: Exception) { null }
+        if (obj != null && obj.optString("type") == "receive") {
+            // Mac wants to fetch a queued file from phone → send it
+            sendQueuedFile(input, output)
+            return
+        }
 
         when (val parsed = FileTransfer.parseHeader(headerLine)) {
             is FileTransfer.HeaderResult.Bad -> {
                 Log.w(TAG, "Refused file: ${parsed.reason}")
-                runCatching { FileTransfer.writeLine(output, failure(parsed.reason)) }
+                runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "failed").put("reason", parsed.reason).toString()) }
                 _state.value = _state.value.copy(
                     isReceiving = false,
                     transferFailed = true,
@@ -399,7 +428,7 @@ class BonjourAdvertiser(private val context: Context) {
             ReceivedFiles.open(context, header.filename)
         } catch (e: Exception) {
             Log.e(TAG, "Could not create the destination file", e)
-            runCatching { FileTransfer.writeLine(output, failure("cannot write to Downloads")) }
+            runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "failed").put("reason", "cannot write to Downloads").toString()) }
             _state.value = _state.value.copy(
                 isReceiving = false,
                 transferFailed = true,
@@ -423,7 +452,7 @@ class BonjourAdvertiser(private val context: Context) {
                 // Never leave a tampered / truncated file where it can be opened.
                 sink.abort()
                 Log.w(TAG, "Hash mismatch for ${header.filename} — deleted")
-                runCatching { FileTransfer.writeLine(output, failure("hash mismatch")) }
+                runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "failed").put("reason", "hash mismatch").toString()) }
                 _state.value = _state.value.copy(
                     isReceiving = false,
                     transferFailed = true,
@@ -433,7 +462,7 @@ class BonjourAdvertiser(private val context: Context) {
         } catch (e: Exception) {
             sink.abort()
             Log.e(TAG, "File receive failed", e)
-            runCatching { FileTransfer.writeLine(output, failure(e.message ?: "transfer failed")) }
+            runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "failed").put("reason", e.message ?: "transfer failed").toString()) }
             _state.value = _state.value.copy(
                 isReceiving = false,
                 transferFailed = true,
@@ -442,8 +471,45 @@ class BonjourAdvertiser(private val context: Context) {
         }
     }
 
-    private fun failure(reason: String): String =
-        JSONObject().put("type", "failed").put("reason", reason).toString()
+    private fun sendQueuedFile(input: BufferedInputStream, output: BufferedOutputStream) {
+        // PEEK, don't dequeue: if the send fails we must not silently lose the
+        // file — it stays queued and the Mac will ask again on its next ping.
+        val file = outgoingQueue.peek()
+        if (file == null) {
+            FileTransfer.writeLine(output, JSONObject().put("type", "idle").toString())
+            return
+        }
+        // Send header
+        val header = JSONObject()
+            .put("type", "file")
+            .put("filename", file.name)
+            .put("size", file.size)
+            .put("sha256", file.sha256Hex)
+            .toString()
+        FileTransfer.writeLine(output, header)
+        // Send body
+        try {
+            val stream = context.contentResolver.openInputStream(file.uri)
+                ?: throw IllegalStateException("file is no longer readable")
+            stream.use { f ->
+                FileTransfer.sendBytes(f, output, file.size)
+            }
+            // Delivered: the Mac verified the hash on its side. Now it's safe to
+            // forget it.
+            outgoingQueue.remove(file)
+            // The Mac closes as soon as it has the last byte, so this courtesy
+            // line can race a closed socket. Never let that turn a good transfer
+            // into a "failed" row on the phone.
+            runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "received").toString()) }
+            _state.value = _state.value.copy(
+                transferFailed = false,
+                transferStatus = "Sent ${file.name} to Mac ✓",
+            )
+        } catch (e: Exception) {
+            runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "failed").put("reason", e.message ?: "send failed").toString()) }
+            _state.value = _state.value.copy(transferFailed = true, transferStatus = "Failed to send ${file.name}: ${e.message}")
+        }
+    }
 
     /**
      * Turn a protocol reply line into a status the UI can display.

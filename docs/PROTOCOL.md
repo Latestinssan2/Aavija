@@ -116,6 +116,26 @@ and move a file. Anything marked **TBD** is decided in a later phase.
   order: the line reader must stop exactly at `\n`, or it would swallow the
   first bytes of the file.
 
+### Phone → Mac (Phase 4b)
+
+The Mac still dials and still authenticates first; only the direction of the
+file changes:
+
+1. The phone's `pong` carries `"outgoing": <n>` — how many files are queued on
+   the phone. The Mac sees a non-zero count on its heartbeat and dials.
+2. TLS + `challenge` / `auth` / `authenticated` exactly as above (no bytes
+   before this point).
+3. Mac → phone: `{"type":"receive"}`.
+4. Phone answers either `{"type":"idle"}` (nothing queued) or a normal `file`
+   header followed by the bytes and the SHA-256 they were hashed with.
+5. The Mac verifies the hash **before** writing, then saves to
+   `~/Downloads/GestureShare/<name>` (atomic write). A bad hash is discarded and
+   reported in the menu-bar panel; nothing is left on disk.
+6. A failed send leaves the file in the phone's queue, so the next heartbeat
+   retries it — a transfer is only removed from the queue after the bytes were
+   sent successfully.
+
+
 ## 4. Safety rules
 
 - Filenames containing `../`, path separators (`/`, `\`), control characters, or
@@ -123,10 +143,13 @@ and move a file. Anything marked **TBD** is decided in a later phase.
 - Files are saved only into a dedicated folder: `Downloads/GestureShare/`.
   Android 10+ writes it through **MediaStore** (no storage permission, and the
   partial row is deleted when a transfer fails); older Android writes the plain
-  path under the storage permission.
-- Max file size: **200 MB**. The phone refuses a larger header before reading
-  any bytes; the Mac refuses to start a send that large, so the user gets a
-  clear message on either side.
+  path under the storage permission. On the Mac the folder is
+  `~/Downloads/GestureShare/`, and the sandbox entitlement is limited to
+  `files.downloads.read-write` (plus read-only access to a file the user picked).
+- Max file size: **200 MB**. Both sides refuse an oversized header before
+  reading any bytes, so the user gets a clear message on either device.
+- The phone accepts a `receive` request only on an **already authenticated**
+  connection, so an unpaired Mac can never pull a queued file.
 - No plaintext fallback — if TLS can't be done on a platform, we stop and
   redesign; we never silently downgrade.
 
@@ -158,3 +181,9 @@ and move a file. Anything marked **TBD** is decided in a later phase.
   (`ping`/`pong`) and shows "Connected to <phone>" vs "Disconnected". Also fixed
   the Send freeze — the file picker is now async, the file is read off the main
   thread, and the sandbox security scope is opened before reading.
+- Phase 4b: **phone → Mac file transfer.** The phone's `pong` now reports its
+  outgoing queue length; when it is non-zero the Mac dials, authenticates, sends
+  `receive`, and the phone answers `idle` or a `file` header + 1 MB chunks. The
+  Mac verifies SHA-256 before writing to `~/Downloads/GestureShare/` and reports
+  the result in the menu-bar panel. A failed send stays queued and is retried on
+  the next heartbeat; the Mac guards against overlapping pulls.

@@ -133,6 +133,20 @@ object FileTransfer {
         }
     }
 
+    /** Send exactly [size] bytes from [input] to [output]. */
+    fun sendBytes(input: InputStream, output: OutputStream, size: Long) {
+        val buf = ByteArray(64 * 1024)
+        var remaining = size
+        while (remaining > 0) {
+            val want = minOf(buf.size.toLong(), remaining).toInt()
+            val n = input.read(buf, 0, want)
+            if (n < 0) throw java.io.IOException("connection closed after ${size - remaining} of $size bytes")
+            output.write(buf, 0, n)
+            remaining -= n
+        }
+        output.flush()
+    }
+
     /** Write one UTF-8 line and flush, so the peer sees it immediately. */
     fun writeLine(output: OutputStream, line: String) {
         output.write((line + "\n").toByteArray(Charsets.UTF_8))

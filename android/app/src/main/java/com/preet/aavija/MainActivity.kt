@@ -1,13 +1,18 @@
 package com.preet.aavija
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,7 +33,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 
 /**
  * Phase 1c of Aavija (swapped architecture):
@@ -227,7 +236,73 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
             color = Color.Gray,
             textAlign = TextAlign.Center,
         )
+
+        // Phase 4b: pick a file and queue it for the paired Mac. The Mac pulls
+        // it on its next heartbeat, so this button only stages the file.
+        //
+        // Hashing reads the WHOLE file, so it must never run on the main thread —
+        // a 100 MB clip would freeze the UI for seconds. The picker callback
+        // therefore only opens a coroutine and does the work on Dispatchers.IO.
+        val scope = rememberCoroutineScope()
+        val pickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            try {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: SecurityException) {
+                // Some providers don't grant persistable access; the read below
+                // still works while the app lives, and the Mac pulls promptly.
+            }
+            scope.launch {
+                val meta = withContext(Dispatchers.IO) { readNameSizeAndHash(context, uri) }
+                if (meta != null) {
+                    advertiser.queueOutgoingFile(uri, meta.first, meta.second, meta.third)
+                } else {
+                    advertiser.reportOutgoingProblem("Couldn't read that file.")
+                }
+            }
+        }
+
+        if (state.isPaired) {
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = { pickLauncher.launch(arrayOf("*/*")) }) {
+                Text("Send file to Mac…")
+            }
+        }
     }
+}
+
+/**
+ * Read (display name, size, SHA-256) from a picked document in one pass.
+ * Returns null when the provider is gone or the file has no size — callers show
+ * a message rather than queueing a transfer that can never be verified.
+ */
+private fun readNameSizeAndHash(context: Context, uri: Uri): Triple<String, Long, String>? {
+    var name = "file"
+    var size = -1L
+    context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+        if (c.moveToFirst()) {
+            val nameIdx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIdx = c.getColumnIndex(OpenableColumns.SIZE)
+            if (nameIdx >= 0) c.getString(nameIdx)?.let { name = it }
+            if (sizeIdx >= 0) size = c.getLong(sizeIdx)
+        }
+    }
+    if (size <= 0) return null
+    val sha = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        } ?: return null
+        PairingCrypto.toHex(digest.digest())
+    } catch (_: Exception) {
+        return null
+    }
+    return Triple(name, size, sha)
 }
 
 /**
