@@ -22,7 +22,10 @@ Hand-gesture file sharing between an Android phone and a Mac on the same Wi-Fi.
 4. Button-based file transfer with SHA-256 verification:
    Mac → phone ✅, phone → Mac ✅ (`~/Downloads/GestureShare` on the Mac,
    `Downloads/GestureShare` on the phone).
-5. Gesture detection on Android (log only, no networking).
+5. Gesture detection on Android (CameraX + MediaPipe Hand Landmarker,
+   10-fps sampling, 5-frame smoothing, OPEN/FIST state machine, GRAB/RELEASE
+   with a minimum hold time). ✅ (camera runs only while Gesture mode is ON,
+   default OFF; no frames leave the device)
 6. Gesture detection on Mac (Vision).
 7. Connect gestures to transfers (10s grab/release window).
 8. Animation overlay (orb / particles / spring-unfold).

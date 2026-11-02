@@ -15,6 +15,12 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- CAMERA: Phase 5 gesture detection. The camera runs ONLY while the user
+         turns Gesture mode on (default off) — see GestureCamera.kt. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Not every device that installs Aavija has a camera; the app degrades to
+         the button-based UI instead of being filtered out of the store. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:label="Aavija"

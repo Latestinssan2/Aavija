@@ -2,6 +2,8 @@ package com.preet.aavija
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.Manifest
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -33,6 +36,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -267,6 +271,95 @@ fun AdvertiserScreen(advertiser: BonjourAdvertiser, macDiscovery: MacDiscovery) 
             Button(onClick = { pickLauncher.launch(arrayOf("*/*")) }) {
                 Text("Send file to Mac…")
             }
+        }
+
+        // ---- Phase 5: gesture mode (OFF by default) -------------------------
+        // The switch is the ONLY thing that starts the camera. Nothing is
+        // recorded, nothing is uploaded: frames become 21 points, the points
+        // become GRAB/RELEASE, and the frame is dropped.
+        Spacer(Modifier.height(28.dp))
+
+        var gestureMode by remember { mutableStateOf(false) }
+        var cameraGranted by remember {
+            mutableStateOf(
+                ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                    PackageManager.PERMISSION_GRANTED
+            )
+        }
+        var cameraProblem by remember { mutableStateOf<String?>(null) }
+        val cameraPermission = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            cameraGranted = granted
+            if (!granted) {
+                cameraProblem = "Camera permission is needed for gesture mode."
+                gestureMode = false
+            }
+        }
+        LaunchedEffect(gestureMode) {
+            if (gestureMode && !cameraGranted) {
+                cameraPermission.launch(Manifest.permission.CAMERA)
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Gesture mode", fontSize = 16.sp)
+                Text("Camera runs only while this is on", fontSize = 12.sp, color = Color.Gray)
+            }
+            Switch(
+                checked = gestureMode,
+                onCheckedChange = { on ->
+                    cameraProblem = null
+                    gestureMode = on
+                },
+            )
+        }
+
+        if (gestureMode && cameraGranted) {
+            Spacer(Modifier.height(12.dp))
+            var pose by remember { mutableStateOf(HandPose.UNKNOWN) }
+            var lastEvent by remember { mutableStateOf<String?>(null) }
+            GestureCameraPreview(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                onPose = { pose = it },
+                onEvent = { event ->
+                    lastEvent = when (event) {
+                        HandGestureMachine.EventType.GRAB -> "GRAB ✊"
+                        HandGestureMachine.EventType.RELEASE -> "RELEASE 🖐"
+                    }
+                },
+                onError = { cameraProblem = it },
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                when (pose) {
+                    HandPose.OPEN -> "Open hand — ready to grab"
+                    HandPose.FIST -> "Fist — holding"
+                    HandPose.UNKNOWN -> "Show your hand to the camera"
+                },
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            lastEvent?.let {
+                Text(
+                    "Last gesture: $it",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+
+        cameraProblem?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, fontSize = 13.sp, color = Color(0xFFF44336), textAlign = TextAlign.Center)
         }
     }
 }
