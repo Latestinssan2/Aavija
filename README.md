@@ -3,8 +3,11 @@
 > **Native Hand-Gesture File & Screenshot Sharing between macOS and Android over Local Wi-Fi.**  
 > Zero cloud relay • Sub-millisecond peer-to-peer • TLS 1.3 encrypted • 100% Native
 
-🌐 **Website**: [https://aavija.vercel.app](https://aavija.vercel.app)  
-👨‍💻 **Creator & Lead Developer**: **Preet Patel** ([Instagram: @_preert_](https://www.instagram.com/_preert_/))
+
+
+https://github.com/user-attachments/assets/56cc402f-568d-458c-9624-f69b874099e6
+
+
 
 ---
 
@@ -21,8 +24,8 @@
 ## ✨ Features
 
 - **Mid-Air Hand Gestures**:
-  - **GRAB ✊**: Close your fist in front of your Mac or phone camera to hold a file or screenshot.
-  - **RELEASE 🖐**: Open your palm on the other device within 10 seconds to catch and save it.
+  - **GRAB**: Close your fist in front of your Mac or phone camera to hold a file or screenshot.
+  - **RELEASE**: Open your palm on the other device within 10 seconds to catch and save it.
   - On-device computer vision (Apple Vision framework on macOS; Google MediaPipe on Android) sampling at 10 fps. Camera runs only while Gesture mode is active. No frames are ever recorded or transmitted.
 - **Screen & Active App Sharing**:
   - **Entire Screen**: Capture your full desktop display.
@@ -32,9 +35,9 @@
   - Interactive multi-touch **Pinch to Zoom (1x to 5x)** and pan.
   - **Double-tap** to zoom/reset.
   - Swipe down to dismiss.
-  - Floating actions: *"આવતું છે ✨"*, *"Open in Photos"*, and *"Done"*.
+  - Floating actions: *"આવતું છે"*, *"Open in Photos"*, and *"Done"*.
 - **Magic Blackout Screen Mode**:
-  - Completely blacks out the Android OLED screen and hides status/navigation bars for clean video demos.
+  - Completely blacks out the Android screen and hides status/navigation bars.
   - Background gesture camera stays actively tracking hands even while the screen remains pitch black.
 - **Zero-Trust Local Security**:
   - 6-digit challenge-response PIN authentication.
@@ -78,7 +81,7 @@ Aavija/
 
 ---
 
-## 🛠️ Building From Source
+##  Building From Source
 
 ### Android (APK)
 ```bash
@@ -97,10 +100,9 @@ xcodebuild -project Aavija.xcodeproj -scheme Aavija -configuration Debug build
 
 ---
 
-## 👨‍💻 Creator & Credits
+## Developer & Credits
 
-Created and maintained by **Preet Patel**.
-- Instagram: [@_preert_](https://www.instagram.com/_preert_/)
-- GitHub: [Preet Patel (@Latestinssan2)](https://github.com/Latestinssan2)
+Developed and maintained by **Latestinssan**.
+- GitHub: [Latestinssan (@Latestinssan2)](https://github.com/Latestinssan2)
 
 Licensed under the MIT License.
