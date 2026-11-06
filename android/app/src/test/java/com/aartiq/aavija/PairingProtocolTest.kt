@@ -78,6 +78,27 @@ class PairingProtocolTest {
     }
 
     @Test
+    fun `a phone pairing does not overwrite the remembered mac name`() {
+        // A phone pairing is not a Mac pairing. If it overwrote this, the Mac
+        // row would flip to "Tap to pair" even though its token is still valid.
+        val mac = "Sandipkumar's MacBook Pro"
+        proto("482913", selected = mac).handle(pairJson(proofHex("482913"), name = mac))
+        assertEquals(mac, store.pairedMacName())
+
+        val phonePair = JSONObject()
+            .put("type", "pair")
+            .put("name", "Pixel 8")
+            .put("proof", proofHex("482913"))
+            .put("platform", PeerProtocol.PLATFORM_ANDROID)
+            .put("requestId", "req-7")
+            .toString()
+        val reply = proto("482913", selected = "Pixel 8").handle(phonePair)
+
+        assertEquals("paired", JSONObject(reply).getString("type"))
+        assertEquals(mac, store.pairedMacName())
+    }
+
+    @Test
     fun `wrong pin returns rejected`() {
         val reply = proto("482913").handle(pairJson(proofHex("000000")))
         assertEquals("rejected", JSONObject(reply).getString("type"))
@@ -159,12 +180,38 @@ class PairingProtocolTest {
         // are different things on the wire.
         val p = proto("482913")
         var queued = 0
-        p.setOutgoingCountProvider { queued }
+        p.setOutgoingCountProvider { _ -> queued }
         assertEquals(0, JSONObject(p.handle(JSONObject().put("type", "ping").toString())).getInt("outgoing"))
         queued = 3
         assertEquals(3, JSONObject(p.handle(JSONObject().put("type", "ping").toString())).getInt("outgoing"))
         // A ping still never counts as a PIN attempt.
         assertEquals("paired", JSONObject(p.handle(pairJson(proofHex("482913")))).getString("type"))
+    }
+
+    @Test
+    fun `pong reports zero to a phone when the queue belongs to a Mac`() {
+        // The single queue belongs to whichever device the user picked last. A
+        // phone peer must not pull a file that was queued for the Mac, so the
+        // listener answers a phone heartbeat with 0 while a Mac still sees it.
+        val p = proto("482913")
+        p.setOutgoingCountProvider { fromPhone -> if (fromPhone) 0 else 3 }
+
+        fun ping(vararg extra: Pair<String, Any>): Int {
+            val obj = JSONObject().put("type", "ping")
+            extra.forEach { (key, value) -> obj.put(key, value) }
+            return JSONObject(p.handle(obj.toString())).getInt("outgoing")
+        }
+
+        assertEquals(3, ping())
+        assertEquals(3, ping("token" to "whatever"))
+        assertEquals(0, ping("platform" to PeerProtocol.PLATFORM_ANDROID))
+        assertEquals(
+            0,
+            ping(
+                "platform" to PeerProtocol.PLATFORM_ANDROID,
+                "token" to "whatever",
+            ),
+        )
     }
 
     @Test

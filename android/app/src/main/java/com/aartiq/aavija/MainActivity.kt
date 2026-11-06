@@ -1,9 +1,11 @@
 package com.aartiq.aavija
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -109,14 +111,24 @@ import java.security.MessageDigest
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var runtime: AavijaRuntime
     private lateinit var advertiser: BonjourAdvertiser
     private lateinit var macDiscovery: MacDiscovery
+    private lateinit var peerDiscovery: PeerDiscovery
+    private lateinit var peerConnector: PeerConnector
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        advertiser = BonjourAdvertiser(this)
-        AavijaSounds.init(this)
-        macDiscovery = MacDiscovery(this)
+
+        // One runtime for the whole process: the foreground service keeps the
+        // same camera, listener, and peer connector alive after this activity
+        // is backgrounded. Creating fresh copies here would silently kill
+        // gesture mode on every onStop/onStart cycle.
+        runtime = AavijaRuntime.get(this)
+        advertiser = runtime.advertiser
+        macDiscovery = runtime.macDiscovery
+        peerDiscovery = runtime.peerDiscovery
+        peerConnector = runtime.peerConnector
         requestLegacyStoragePermissionIfNeeded()
 
         setContent {
@@ -124,8 +136,11 @@ class MainActivity : ComponentActivity() {
 
             AavijaAppTheme(themeMode = themeMode) {
                 AdvertiserScreen(
+                    runtime = runtime,
                     advertiser = advertiser,
                     macDiscovery = macDiscovery,
+                    peerDiscovery = peerDiscovery,
+                    peerConnector = peerConnector,
                     themeMode = themeMode,
                     onThemeToggle = {
                         themeMode = themeMode.next()
@@ -146,30 +161,56 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        advertiser.start()
-        macDiscovery.start()
+        runtime.onUiStarted()
     }
 
     override fun onStop() {
-        macDiscovery.stop()
-        advertiser.stop()
+        // If the foreground service is running this deliberately does nothing
+        // to the camera/network; otherwise the runtime stops the Wi-Fi session.
+        runtime.onUiStopped()
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        // Never shutdown() the peer connector here: the service may still be
+        // running and would lose its heartbeat job forever. The runtime lives
+        // as long as the process, exactly like the service.
+        super.onDestroy()
     }
 }
 
 @Composable
 fun AdvertiserScreen(
+    runtime: AavijaRuntime,
     advertiser: BonjourAdvertiser,
     macDiscovery: MacDiscovery,
+    peerDiscovery: PeerDiscovery,
+    peerConnector: PeerConnector,
     themeMode: AppThemeMode,
     onThemeToggle: () -> Unit,
 ) {
     val state by advertiser.state.collectAsState()
     val pin by advertiser.typedPin.collectAsState()
     val macs by macDiscovery.macs.collectAsState()
+    val peers by peerDiscovery.peers.collectAsState()
+    val peerState by peerConnector.state.collectAsState()
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val colors = LocalAavijaColors.current
+
+    // The device a queued file is headed for. The phone peer is the most
+    // recently activated target; tapping a Mac switches the queue back.
+    val targetName: String? = when {
+        peerState.isPaired && peerState.targetActive && !peerState.pairingFailed ->
+            peerState.pairedPeerName ?: "phone"
+        // On the listener side a phone client can be the latest pairing; it is
+        // tracked separately so the Mac row keeps its own name. Only show it
+        // when that phone actually owns the queue.
+        state.phoneTargetActive && state.pairedPhoneName != null ->
+            state.pairedPhoneName
+        state.isPaired && state.pairedMacName != null -> state.pairedMacName
+        else -> null
+    }
 
     // Screenshot sharing: open photo viewer when a new image arrives
     var openImage by remember { mutableStateOf<BonjourAdvertiser.ReceivedImage?>(null) }
@@ -189,6 +230,8 @@ fun AdvertiserScreen(
 
     var isBlackoutMode by rememberSaveable { mutableStateOf(false) }
     var showBlackoutHint by remember { mutableStateOf(false) }
+    var gestureWasOnBeforeBlackout by remember { mutableStateOf(false) }
+    var blackoutCaptureProblem by remember { mutableStateOf<String?>(null) }
 
     // Immersive fullscreen for blackout mode: hide status and navigation bars
     val activity = context as? ComponentActivity
@@ -223,12 +266,21 @@ fun AdvertiserScreen(
     ) { granted ->
         blackoutCameraGranted = granted
     }
+    val requestBlackoutProjection = rememberScreenCaptureRequester(context) {
+        blackoutCaptureProblem = it
+    }
 
     LaunchedEffect(isBlackoutMode, blackoutCameraGranted) {
         if (isBlackoutMode) {
-            advertiser.setGestureMode(true)
             if (!blackoutCameraGranted) {
                 blackoutCameraPermission.launch(Manifest.permission.CAMERA)
+                return@LaunchedEffect
+            }
+            // The service owns the camera now, so blackout mode survives a
+            // screen-off or app switch just like normal gesture mode.
+            GestureShareService.start(context)
+            if (!runtime.screenCapture.isActive()) {
+                requestBlackoutProjection()
             }
         }
     }
@@ -242,7 +294,11 @@ fun AdvertiserScreen(
                     detectTapGestures(
                         onDoubleTap = {
                             isBlackoutMode = false
-                            advertiser.setGestureMode(false)
+                            // Restore whatever the user had before entering
+                            // blackout; don't silently switch gesture mode off.
+                            if (!gestureWasOnBeforeBlackout) {
+                                GestureShareService.stop(context)
+                            }
                         },
                         onTap = {
                             showBlackoutHint = true
@@ -259,14 +315,22 @@ fun AdvertiserScreen(
                         .graphicsLayer { alpha = 0.01f }
                 ) {
                     GestureCameraPreview(
+                        controller = runtime.gestureCamera,
                         modifier = Modifier.fillMaxSize(),
-                        onPose = { /* pose tracked */ },
-                        onEvent = { event ->
-                            advertiser.onGesture(event)
-                        },
-                        onError = { /* camera problem */ },
                     )
                 }
+            }
+
+            blackoutCaptureProblem?.let { problem ->
+                Text(
+                    text = problem,
+                    color = Color.White.copy(alpha = 0.60f),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(24.dp),
+                )
             }
 
             AnimatedVisibility(
@@ -307,9 +371,12 @@ fun AdvertiserScreen(
     }
 
     val selectedMac = state.selectedMac
-    if (selectedMac != null && !state.isPaired) {
+    // Both a Mac AND a phone can ask us to pair. `pairingRequestActive` is the
+    // honest "a prompt is live" flag: `isPaired` only means we have SOME token,
+    // so it must not suppress a new phone's prompt.
+    if (selectedMac != null && state.pairingRequestActive && !peerState.isPairing) {
         PinEntryPopup(
-            macName = selectedMac,
+            deviceName = selectedMac,
             pin = pin,
             state = state,
             onPinChange = { advertiser.setPin(it) },
@@ -317,7 +384,18 @@ fun AdvertiserScreen(
                 advertiser.submitPin()
                 focusManager.clearFocus()
             },
-            onDismiss = { advertiser.selectMac(null) },
+            onDismiss = { advertiser.dismissPairingRequest() },
+        )
+    }
+
+    // The CONNECTING phone shows the PIN; the other phone types it.
+    if (peerState.isPairing) {
+        PeerPinDialog(
+            peerName = peerState.pairingPeerName ?: "phone",
+            pin = peerState.pin ?: "",
+            status = peerState.pairingStatus,
+            failed = peerState.pairingFailed,
+            onCancel = { peerConnector.cancelPairing() },
         )
     }
 
@@ -354,6 +432,7 @@ fun AdvertiserScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
+                        gestureWasOnBeforeBlackout = state.gestureMode
                         showBlackoutHint = true
                         isBlackoutMode = true
                     }
@@ -406,8 +485,54 @@ fun AdvertiserScreen(
                 selectedMac = selectedMac,
                 isPaired = state.isPaired,
                 pairedMacName = state.pairedMacName,
-                onSelectMac = { advertiser.selectMac(it) },
+                onSelectMac = {
+                    // Picking a Mac makes it the send target; a file must not be
+                    // pushed/pulled by a paired phone behind the user's back.
+                    advertiser.setMacTargetActive(true)
+                    peerConnector.pauseTarget()
+                    advertiser.selectMac(it)
+                },
             )
+
+            Spacer(Modifier.height(14.dp))
+
+            // Other phones running Aavija.
+            AvailablePhonesCard(
+                peers = peers,
+                pairedIds = peerState.pairedPeerIds,
+                activePeerId = peerState.activePeerId,
+                pairedPeerName = peerState.pairedPeerName,
+                trustedPhoneName = state.pairedPhoneName,
+                phoneTargetActive = state.phoneTargetActive,
+                isPaired = peerState.isPaired,
+                isReachable = peerState.isReachable,
+                targetActive = peerState.targetActive,
+                onSelect = { peer ->
+                    // A phone tap switches the single queue back to phone mode.
+                    advertiser.setMacTargetActive(false)
+                    // If this phone is the one that paired with US, it already
+                    // has a token here and dials us; do not start a redundant
+                    // reverse pairing. Just give it the queue back.
+                    val alreadyOurs = peerConnector.isPairedWith(peer.id)
+                    if (!alreadyOurs && advertiser.resumePhoneTarget(peer.name)) {
+                        // Listener-side peer: let it pull, and stop pushing the
+                        // queue to any outbound peer we were driving.
+                        peerConnector.pauseTarget()
+                    } else {
+                        peerConnector.pairWith(peer)
+                    }
+                },
+            )
+
+            // Client-side pairing status ("Waiting for Pixel…", "Wrong PIN").
+            if (!peerState.isPairing && peerState.pairingStatus != null) {
+                Spacer(Modifier.height(14.dp))
+                StatusPill(
+                    text = peerState.pairingStatus!!,
+                    isPaired = peerState.isPaired && !peerState.pairingFailed,
+                    isWaiting = false,
+                )
+            }
 
             // Connection / Pairing Status Banner
             if (state.lastPairing != null) {
@@ -445,15 +570,21 @@ fun AdvertiserScreen(
                     val meta = withContext(Dispatchers.IO) { readNameSizeAndHash(context, uri) }
                     if (meta != null) {
                         advertiser.queueOutgoingFile(uri, meta.first, meta.second, meta.third)
+                        // If a phone is the active target, send it right away
+                        // (unless Gesture mode is waiting for a grab/release).
+                        peerConnector.onFileQueued()
                     } else {
                         advertiser.reportOutgoingProblem("Couldn't read that file.")
                     }
                 }
             }
 
-            if (state.isPaired) {
+            if (targetName != null) {
                 Spacer(Modifier.height(20.dp))
-                SendFileCard(onPickFile = { pickLauncher.launch(arrayOf("*/*")) })
+                SendFileCard(
+                    label = "Send file to $targetName…",
+                    onPickFile = { pickLauncher.launch(arrayOf("*/*")) },
+                )
             }
 
             Spacer(Modifier.height(24.dp))
@@ -461,8 +592,11 @@ fun AdvertiserScreen(
             // Gesture Mode Interactive Card
             GestureModeSection(
                 context = context,
+                runtime = runtime,
                 state = state,
                 advertiser = advertiser,
+                peerConnector = peerConnector,
+                targetName = targetName,
             )
 
             Spacer(Modifier.height(36.dp))
@@ -480,6 +614,33 @@ fun AdvertiserScreen(
                 image = image,
                 onDismiss = { openImage = null },
             )
+        }
+    }
+}
+
+@Composable
+private fun rememberScreenCaptureRequester(
+    context: Context,
+    onProblem: (String?) -> Unit,
+): () -> Unit {
+    val manager = remember(context) {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            GestureShareService.grantProjection(context, result.resultCode, data)
+            onProblem(null)
+        } else {
+            onProblem("Screen capture permission is needed to share screenshots.")
+        }
+    }
+    return remember(launcher, manager) {
+        {
+            runCatching { launcher.launch(manager.createScreenCaptureIntent()) }
+                .onFailure { onProblem("Couldn't open the screen-capture dialog.") }
         }
     }
 }
@@ -740,7 +901,12 @@ private fun AvailableMacsCard(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     macs.forEach { mac ->
-                        val isThisPaired = isPaired && (pairedMacName == mac.name || pairedMacName == null)
+                        // `isPaired` means "we trust SOME device", which can now
+                        // be another phone. Only name a Mac as trusted when it is
+                        // the Mac this phone actually paired with; otherwise an
+                        // Android-only pairing would make every Mac row claim
+                        // "Paired ✓" without a Mac token.
+                        val isThisPaired = isPaired && pairedMacName == mac.name
                         val isChosen = mac.name == selectedMac
 
                         Surface(
@@ -796,6 +962,223 @@ private fun AvailableMacsCard(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (isThisPaired) colors.statusSuccess else colors.primary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class PhoneRow(
+    val id: String,
+    val name: String,
+    val online: Boolean,
+    val peer: PeerDiscovery.PhonePeer?,
+)
+
+/**
+ * Other phones running Aavija on this Wi-Fi.
+ *
+ * Ordering is deliberately derived from [PeerDiscovery]'s stable name order
+ * (with the paired-but-offline phone appended in the same sort). A row never
+ * jumps while the user is reaching for it.
+ */
+@Composable
+private fun AvailablePhonesCard(
+    peers: List<PeerDiscovery.PhonePeer>,
+    pairedIds: Set<String>,
+    activePeerId: String?,
+    pairedPeerName: String?,
+    /**
+     * The phone that paired with US as its listener (we did not dial it). It is
+     * tracked by name because the listener's outbound store never sees it.
+     */
+    trustedPhoneName: String?,
+    /** Does that listener-side phone currently own the outgoing queue? */
+    phoneTargetActive: Boolean,
+    isPaired: Boolean,
+    isReachable: Boolean,
+    targetActive: Boolean,
+    onSelect: (PeerDiscovery.PhonePeer) -> Unit,
+) {
+    val colors = LocalAavijaColors.current
+
+    val rows = buildList {
+        peers.forEach { add(PhoneRow(it.id, it.name, online = true, peer = it)) }
+        if (isPaired && activePeerId != null && peers.none { it.id == activePeerId }) {
+            add(
+                PhoneRow(
+                    id = activePeerId,
+                    name = pairedPeerName ?: "Paired phone",
+                    online = false,
+                    peer = null,
+                ),
+            )
+        }
+    }.sortedWith(compareBy({ it.name.lowercase() }, { it.id }))
+
+    Surface(
+        color = colors.surface,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, colors.surfaceBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(12.dp, RoundedCornerShape(24.dp)),
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "OTHER PHONES",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textTertiary,
+                    letterSpacing = 1.sp,
+                )
+
+                if (rows.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(colors.primary),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            if (rows.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 18.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(
+                            color = colors.primary,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Searching for other phones…\nOpen Aavija on the second phone",
+                            fontSize = 13.sp,
+                            color = colors.textSecondary,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 18.sp,
+                        )
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    rows.forEach { row ->
+                        val isCurrent = isPaired && row.id == activePeerId
+                        // The listener never dialled this phone, but the phone
+                        // paired with us: its row is still trusted.
+                        val pairedHere = trustedPhoneName != null &&
+                            row.name == trustedPhoneName
+                        val trusted = row.id in pairedIds || isCurrent || pairedHere
+                        // Trust is not the same as "owns the queue": tapping a
+                        // Mac pauses the phone target without unpairing it.
+                        val chosen = if (isCurrent) {
+                            targetActive
+                        } else {
+                            pairedHere && phoneTargetActive
+                        }
+
+                        val subtitle = when {
+                            !row.online -> "Paired • offline"
+                            chosen -> if (isReachable || pairedHere) {
+                                "Trusted • ready to share"
+                            } else {
+                                "Trusted • connecting…"
+                            }
+                            isCurrent -> "Trusted • tap to send here"
+                            trusted -> "Trusted • tap to switch"
+                            else -> "Tap to pair"
+                        }
+
+                        Surface(
+                            color = if (chosen || isCurrent) colors.surfaceElevated else Color.Transparent,
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(
+                                width = if (chosen) 1.5.dp else 1.dp,
+                                color = when {
+                                    chosen -> colors.primary
+                                    trusted -> colors.statusSuccess
+                                    else -> colors.surfaceBorder
+                                },
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = row.online) {
+                                    row.peer?.let(onSelect)
+                                },
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(colors.primary.copy(alpha = 0.14f)),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text("📱", fontSize = 17.sp)
+                                }
+
+                                Spacer(Modifier.width(14.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = row.name,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.textPrimary,
+                                    )
+                                    Text(
+                                        text = subtitle,
+                                        fontSize = 12.sp,
+                                        color = when {
+                                            chosen || isCurrent -> colors.primary
+                                            trusted -> colors.statusSuccess
+                                            else -> colors.textTertiary
+                                        },
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (trusted) colors.statusSuccess.copy(alpha = 0.16f)
+                                            else colors.primary.copy(alpha = 0.14f)
+                                        )
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                ) {
+                                    Text(
+                                        text = when {
+                                            !row.online -> "Offline"
+                                            chosen -> "Sending ✓"
+                                            trusted -> "Paired ✓"
+                                            else -> "Pair →"
+                                        },
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (trusted) colors.statusSuccess else colors.primary,
                                     )
                                 }
                             }
@@ -877,7 +1260,7 @@ private fun TransferStatusPill(status: String, isReceiving: Boolean, failed: Boo
 }
 
 @Composable
-private fun SendFileCard(onPickFile: () -> Unit) {
+private fun SendFileCard(label: String, onPickFile: () -> Unit) {
     val colors = LocalAavijaColors.current
 
     Surface(
@@ -901,7 +1284,7 @@ private fun SendFileCard(onPickFile: () -> Unit) {
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                text = "Send file to Mac…",
+                text = label,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = colors.primary,
@@ -913,11 +1296,19 @@ private fun SendFileCard(onPickFile: () -> Unit) {
 @Composable
 private fun GestureModeSection(
     context: Context,
+    runtime: AavijaRuntime,
     state: BonjourAdvertiser.AdState,
     advertiser: BonjourAdvertiser,
+    peerConnector: PeerConnector,
+    targetName: String?,
 ) {
     val colors = LocalAavijaColors.current
-    var gestureMode by remember { mutableStateOf(false) }
+    // The switch follows the service, not a local flag, so it stays correct
+    // after a pause/resume or process restart.
+    val gestureMode = state.gestureMode
+    var wantGestureMode by remember { mutableStateOf(state.gestureMode) }
+    LaunchedEffect(state.gestureMode) { wantGestureMode = state.gestureMode }
+
     var cameraGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -925,22 +1316,50 @@ private fun GestureModeSection(
         )
     }
     var cameraProblem by remember { mutableStateOf<String?>(null) }
+
+    val screenCaptureActive by runtime.screenCapture.active.collectAsState()
+    val screenCaptureError by runtime.screenCapture.lastError.collectAsState()
+    var captureProblem by remember { mutableStateOf<String?>(null) }
+    val requestProjection = rememberScreenCaptureRequester(context) { captureProblem = it }
+
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    val startGestureMode: () -> Unit = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        GestureShareService.start(context)
+        if (!screenCaptureActive) {
+            requestProjection()
+        }
+    }
+
     val cameraPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         cameraGranted = granted
         if (!granted) {
             cameraProblem = "Camera permission is needed for gesture mode."
-            gestureMode = false
+            wantGestureMode = false
+        } else if (wantGestureMode) {
+            startGestureMode()
         }
     }
 
-    LaunchedEffect(gestureMode, cameraGranted, state.isAdvertising) {
-        advertiser.setGestureMode(gestureMode && cameraGranted)
-        if (gestureMode && !cameraGranted) {
-            cameraPermission.launch(Manifest.permission.CAMERA)
+    LaunchedEffect(wantGestureMode, cameraGranted) {
+        if (wantGestureMode && cameraGranted) {
+            startGestureMode()
+        } else if (!wantGestureMode) {
+            GestureShareService.stop(context)
         }
     }
+
+    val cameraError by runtime.gestureCamera.error.collectAsState()
 
     Surface(
         color = colors.surface,
@@ -989,7 +1408,11 @@ private fun GestureModeSection(
                     checked = gestureMode,
                     onCheckedChange = { on ->
                         cameraProblem = null
-                        gestureMode = on
+                        captureProblem = null
+                        if (on && !cameraGranted) {
+                            cameraPermission.launch(Manifest.permission.CAMERA)
+                        }
+                        wantGestureMode = on
                     },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
@@ -1002,8 +1425,11 @@ private fun GestureModeSection(
 
             if (gestureMode && cameraGranted) {
                 Spacer(Modifier.height(18.dp))
-                var pose by remember { mutableStateOf(HandPose.UNKNOWN) }
-                var lastEvent by remember { mutableStateOf<String?>(null) }
+                val pose by runtime.gestureCamera.pose.collectAsState()
+                val cameraError by runtime.gestureCamera.error.collectAsState()
+                LaunchedEffect(cameraError) {
+                    if (cameraError != null) cameraProblem = cameraError
+                }
 
                 Box(
                     modifier = Modifier
@@ -1013,16 +1439,8 @@ private fun GestureModeSection(
                         .border(1.dp, colors.primary.copy(alpha = 0.45f), RoundedCornerShape(20.dp)),
                 ) {
                     GestureCameraPreview(
+                        controller = runtime.gestureCamera,
                         modifier = Modifier.fillMaxSize(),
-                        onPose = { pose = it },
-                        onEvent = { event ->
-                            lastEvent = when (event) {
-                                HandGestureMachine.EventType.GRAB -> "GRAB ✊"
-                                HandGestureMachine.EventType.RELEASE -> "RELEASE 🖐"
-                            }
-                            advertiser.onGesture(event)
-                        },
-                        onError = { cameraProblem = it },
                     )
 
                     // Floating Pose Indicator Badge inside Camera Preview
@@ -1060,7 +1478,7 @@ private fun GestureModeSection(
                     }
                 }
 
-                lastEvent?.let {
+                state.lastGesture?.let {
                     Spacer(Modifier.height(10.dp))
                     Text(
                         "Last gesture: $it",
@@ -1072,7 +1490,7 @@ private fun GestureModeSection(
                     )
                 }
 
-                if (state.isPaired) {
+                if (targetName != null) {
                     Spacer(Modifier.height(14.dp))
                     Surface(
                         color = colors.surfaceElevated,
@@ -1089,11 +1507,51 @@ private fun GestureModeSection(
                             )
                             Spacer(Modifier.height(6.dp))
                             Text(
-                                "• To receive screenshot: GRAB on your Mac with no file held, then RELEASE here — the photo unfolds instantly!\n• To send: GRAB here, then RELEASE on your Mac within 10s.",
+                                "• To receive: GRAB on $targetName, then RELEASE here — the file arrives instantly!\n" +
+                                    "• To send a file: GRAB here, then RELEASE on $targetName within 10s.\n" +
+                                    "• To send a screenshot: GRAB here captures your screen, RELEASE on $targetName shares it.\n" +
+                                    "• Gestures keep working when Aavija is in the background.",
                                 fontSize = 12.sp,
                                 color = colors.textSecondary,
                                 lineHeight = 17.sp,
                             )
+                        }
+                    }
+                }
+            }
+
+            if (gestureMode) {
+                Spacer(Modifier.height(10.dp))
+                if (screenCaptureActive) {
+                    Text(
+                        "Screenshots ready • GRAB captures your screen, RELEASE shares it",
+                        fontSize = 12.sp,
+                        color = colors.statusSuccess,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Surface(
+                        color = colors.surfaceElevated,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, colors.statusWarning),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                captureProblem ?: screenCaptureError
+                                    ?: "Screen capture is off. Enable it to GRAB screenshots.",
+                                fontSize = 12.sp,
+                                color = colors.statusWarning,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = { requestProjection() },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Text("Enable screenshot sharing")
+                            }
                         }
                     }
                 }
@@ -1142,8 +1600,99 @@ private fun ModernLaptopIcon(tint: Color) {
 }
 
 @Composable
+private fun PeerPinDialog(
+    peerName: String,
+    pin: String,
+    status: String?,
+    failed: Boolean,
+    onCancel: () -> Unit,
+) {
+    val colors = LocalAavijaColors.current
+
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = colors.surface,
+        shape = RoundedCornerShape(26.dp),
+        title = {
+            Text(
+                "Pair with $peerName",
+                fontWeight = FontWeight.Bold,
+                fontSize = 20.sp,
+                color = colors.textPrimary,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "Type this PIN into $peerName. It works once and is never sent over Wi-Fi.",
+                    fontSize = 14.sp,
+                    color = colors.textSecondary,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(16.dp))
+                Surface(
+                    color = colors.surfaceElevated,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = pin.ifEmpty { "······" },
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign = TextAlign.Center,
+                        letterSpacing = 8.sp,
+                        color = colors.textPrimary,
+                        modifier = Modifier.padding(vertical = 14.dp),
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = colors.primary,
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Waiting for $peerName…",
+                        fontSize = 13.sp,
+                        color = colors.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                if (status != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        status,
+                        fontSize = 13.sp,
+                        color = if (failed) colors.statusError else colors.textSecondary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Cancel",
+                    color = colors.textSecondary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        },
+    )
+}
+
+@Composable
 private fun PinEntryPopup(
-    macName: String,
+    deviceName: String,
     pin: String,
     state: BonjourAdvertiser.AdState,
     onPinChange: (String) -> Unit,
@@ -1193,7 +1742,7 @@ private fun PinEntryPopup(
         shape = RoundedCornerShape(26.dp),
         title = {
             Text(
-                "Pair with $macName",
+                "Pair with $deviceName",
                 fontWeight = FontWeight.Bold,
                 fontSize = 20.sp,
                 color = colors.textPrimary,
@@ -1214,7 +1763,7 @@ private fun PinEntryPopup(
                     )
                 } else {
                     Text(
-                        "Enter the 6-digit PIN shown on your Mac.",
+                        "Enter the 6-digit PIN shown on the other device.",
                         fontSize = 14.sp,
                         color = colors.textSecondary,
                         textAlign = TextAlign.Center,
@@ -1289,7 +1838,7 @@ private fun PinEntryPopup(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "Verifying with your Mac…",
+                                "Verifying with the other device…",
                                 fontSize = 13.sp,
                                 color = colors.primary,
                                 fontWeight = FontWeight.SemiBold,
@@ -1298,7 +1847,7 @@ private fun PinEntryPopup(
                     } else if (state.isWaitingForPin) {
                         Spacer(Modifier.height(10.dp))
                         Text(
-                            "Waiting for your Mac…",
+                            "Waiting for the other device…",
                             fontSize = 13.sp,
                             color = colors.statusWarning,
                         )

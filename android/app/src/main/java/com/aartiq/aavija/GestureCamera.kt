@@ -12,94 +12,153 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Phase 5: camera → MediaPipe hand landmarks → [HandGestureMachine].
+ * Camera → MediaPipe hand landmarks → [HandGestureMachine].
  *
- * The camera exists ONLY while this panel is composed, and the panel only
- * exists while Gesture mode is ON (default OFF). There is no background
- * camera, no recording, and nothing leaves the device: [HandPoint]s are
- * classified locally and the frame is discarded immediately.
+ * The controller owns its own [Lifecycle] instead of borrowing the activity's.
+ * That is the key change that lets [GestureShareService] keep the camera and
+ * gesture detection alive while the UI is backgrounded: the activity only
+ * attaches a preview surface when it is visible, and detaches it again when it
+ * goes away. The analysis use case never stops until Gesture Mode is turned
+ * off.
  *
  * Frames are throttled to ~10 fps on purpose — the state machine is tuned for
  * that rate, and running the landmarker at 30 fps would just burn battery to
- * produce the same five-frame window faster.
+ * produce the same five-frame window faster. Frames are classified in memory
+ * and discarded immediately; nothing is recorded or transmitted.
  */
-@Composable
-fun GestureCameraPreview(
-    modifier: Modifier = Modifier,
-    onPose: (HandPose) -> Unit,
-    onEvent: (HandGestureMachine.EventType) -> Unit,
-    onError: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
+class GestureCameraController(private val context: Context) : LifecycleOwner {
 
-    // rememberUpdatedState lets the controller keep running while the lambdas
-    // change identity on recomposition (they close over mutable state).
-    val poseCb = rememberUpdatedState(onPose)
-    val eventCb = rememberUpdatedState(onEvent)
-    val errorCb = rememberUpdatedState(onError)
+    companion object {
+        private const val TAG = "AavijaGesture"
 
-    val controller = remember { CameraGestureController(context) }
-    SideEffect {
-        controller.onPose = { poseCb.value(it) }
-        controller.onEvent = { eventCb.value(it) }
-        controller.onError = { errorCb.value(it) }
+        /** ~10 fps: the rate HandGestureMachine's 5-frame window is tuned for. */
+        private const val FRAME_INTERVAL_MS = 100L
+
+        /** How long with no hand before we forget the pose (avoid phantom events). */
+        private const val HAND_LOST_MS = 800L
     }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            PreviewView(ctx).also { view ->
-                view.scaleType = PreviewView.ScaleType.FILL_CENTER
-                controller.start(view, lifecycleOwner)
-            }
-        },
-    )
+    private var registry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = registry
 
-    DisposableEffect(Unit) {
-        onDispose { controller.release() }
-    }
-}
-
-/** Owns the CameraX session + MediaPipe landmarker for one Gesture-mode session. */
-private class CameraGestureController(private val context: Context) {
-    var onPose: (HandPose) -> Unit = {}
+    /** Set by [AavijaRuntime]; receives every settled GRAB/RELEASE. */
     var onEvent: (HandGestureMachine.EventType) -> Unit = {}
-    var onError: (String) -> Unit = {}
 
-    private val analysisExecutor = Executors.newSingleThreadExecutor()
+    private val _pose = MutableStateFlow(HandPose.UNKNOWN)
+    val pose: StateFlow<HandPose> = _pose.asStateFlow()
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val machine = HandGestureMachine()
 
+    private var analysisExecutor: ExecutorService? = null
     private var cameraProvider: ProcessCameraProvider? = null
+    private var previewUseCase: Preview? = null
+    private var previewSurface: Preview.SurfaceProvider? = null
     private var landmarker: HandLandmarker? = null
     private var lastAnalysisAt = 0L
     private var lastHandAt = 0L
-    private var released = false
 
-    fun start(previewView: PreviewView, lifecycleOwner: androidx.lifecycle.LifecycleOwner) {
-        if (released || landmarker != null) return
+    /** Increments on every start/release so old camera callbacks are ignored. */
+    private var generation = 0
 
+    @Volatile
+    private var running = false
+
+    /** Start the camera + landmarker. Idempotent. */
+    @Synchronized
+    fun start() {
+        if (running) return
+        running = true
+        val gen = ++generation
+        _error.value = null
+        machine.reset()
+        _pose.value = HandPose.UNKNOWN
+        analysisExecutor = Executors.newSingleThreadExecutor()
+        registry = LifecycleRegistry(this).also {
+            it.currentState = Lifecycle.State.STARTED
+        }
+        createLandmarker(gen)
+        startCamera(gen)
+    }
+
+    /**
+     * Attach a visible preview surface. Camera analysis is already running in
+     * the service; this only decides whether the user sees frames.
+     */
+    @Synchronized
+    fun attachPreview(previewView: PreviewView) {
+        previewSurface = previewView.surfaceProvider
+        previewUseCase?.setSurfaceProvider(previewSurface)
+        if (!running) start()
+    }
+
+    /** The UI left; keep analysing, stop rendering. */
+    @Synchronized
+    fun detachPreview() {
+        previewSurface = null
+        previewUseCase?.setSurfaceProvider(null)
+    }
+
+    /** Stop the camera and release MediaPipe. Safe to call repeatedly. */
+    @Synchronized
+    fun release() {
+        if (!running) return
+        running = false
+        generation += 1
+
+        try {
+            cameraProvider?.unbindAll()
+        } catch (_: Exception) {
+        }
+        cameraProvider = null
+        previewUseCase?.setSurfaceProvider(null)
+        previewUseCase = null
+        previewSurface = null
+
+        try {
+            landmarker?.close()
+        } catch (_: Exception) {
+        }
+        landmarker = null
+
+        analysisExecutor?.shutdownNow()
+        analysisExecutor = null
+
+        try {
+            registry.currentState = Lifecycle.State.DESTROYED
+        } catch (_: Exception) {
+        }
+
+        machine.reset()
+        _pose.value = HandPose.UNKNOWN
+        Log.i(TAG, "Gesture camera stopped")
+    }
+
+    private fun createLandmarker(gen: Int) {
         val options = HandLandmarker.HandLandmarkerOptions.builder()
             .setBaseOptions(
                 BaseOptions.builder()
@@ -111,8 +170,12 @@ private class CameraGestureController(private val context: Context) {
             .setMinHandDetectionConfidence(0.5f)
             .setMinHandPresenceConfidence(0.5f)
             .setMinTrackingConfidence(0.5f)
-            .setResultListener { result, _ -> onResult(result) }
-            .setErrorListener { error -> postError(error.message ?: "hand detection failed") }
+            .setResultListener { result, _ -> if (gen == generation) onResult(result) }
+            .setErrorListener { error ->
+                if (gen == generation) {
+                    postError(error.message ?: "hand detection failed")
+                }
+            }
             .build()
 
         try {
@@ -120,29 +183,33 @@ private class CameraGestureController(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Could not load the hand model", e)
             postError("Gesture model failed to load: ${e.message}")
-            return
         }
+    }
 
+    private fun startCamera(gen: Int) {
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
-            if (released) return@addListener
+            if (!running || gen != generation) return@addListener
             try {
                 val provider = future.get()
                 cameraProvider = provider
 
-                val preview = Preview.Builder().build().also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
+                val preview = Preview.Builder().build().also { useCase ->
+                    previewSurface?.let { useCase.setSurfaceProvider(it) }
                 }
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setTargetResolution(Size(640, 480))
                     .build()
-                analysis.setAnalyzer(analysisExecutor) { image -> analyze(image) }
+                analysis.setAnalyzer(analysisExecutor ?: return@addListener) { image ->
+                    analyze(image, gen)
+                }
 
+                previewUseCase = preview
                 provider.unbindAll()
                 try {
                     provider.bindToLifecycle(
-                        lifecycleOwner,
+                        this,
                         CameraSelector.DEFAULT_FRONT_CAMERA,
                         preview,
                         analysis,
@@ -152,12 +219,13 @@ private class CameraGestureController(private val context: Context) {
                     // still get gesture mode from the rear lens.
                     Log.w(TAG, "Front camera unavailable, trying the back one", frontError)
                     provider.bindToLifecycle(
-                        lifecycleOwner,
+                        this,
                         CameraSelector.DEFAULT_BACK_CAMERA,
                         preview,
                         analysis,
                     )
                 }
+                registry.currentState = Lifecycle.State.RESUMED
                 Log.i(TAG, "Gesture camera started")
             } catch (e: Exception) {
                 Log.e(TAG, "Could not start the camera", e)
@@ -166,7 +234,7 @@ private class CameraGestureController(private val context: Context) {
         }, ContextCompat.getMainExecutor(context))
     }
 
-    private fun analyze(image: ImageProxy) {
+    private fun analyze(image: ImageProxy, gen: Int) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastAnalysisAt < FRAME_INTERVAL_MS) {
             image.close()
@@ -187,7 +255,7 @@ private class CameraGestureController(private val context: Context) {
     }
 
     private fun onResult(result: HandLandmarkerResult) {
-        if (released) return
+        if (!running) return
         val now = SystemClock.elapsedRealtime()
         val hand = result.landmarks().firstOrNull()
 
@@ -198,7 +266,7 @@ private class CameraGestureController(private val context: Context) {
             if (lastHandAt != 0L && now - lastHandAt > HAND_LOST_MS) {
                 lastHandAt = 0L
                 machine.reset()
-                postPose(HandPose.UNKNOWN)
+                _pose.value = HandPose.UNKNOWN
             }
             return
         }
@@ -208,43 +276,41 @@ private class CameraGestureController(private val context: Context) {
         val event = machine.onFrame(points, now)
         if (event != null) {
             Log.i(TAG, "Gesture: ${event.type}")
-            mainHandler.post { onEvent(event.type) }
+            mainHandler.post {
+                if (running) onEvent(event.type)
+            }
         }
-        postPose(machine.currentPose)
-    }
-
-    private fun postPose(pose: HandPose) {
-        mainHandler.post { if (!released) onPose(pose) }
+        _pose.value = machine.currentPose
     }
 
     private fun postError(message: String) {
-        mainHandler.post { if (!released) onError(message) }
-    }
-
-    fun release() {
-        released = true
-        try {
-            cameraProvider?.unbindAll()
-        } catch (_: Exception) {
+        mainHandler.post {
+            if (running) _error.value = message
         }
-        cameraProvider = null
-        try {
-            landmarker?.close()
-        } catch (_: Exception) {
-        }
-        landmarker = null
-        analysisExecutor.shutdownNow()
-        machine.reset()
-        Log.i(TAG, "Gesture camera stopped")
     }
+}
 
-    private companion object {
-        const val TAG = "AavijaGesture"
+/**
+ * The live preview. Camera ownership stays with [GestureCameraController] (and
+ * therefore with the foreground service); this composable only lends its
+ * surface while it is on screen.
+ */
+@Composable
+fun GestureCameraPreview(
+    controller: GestureCameraController,
+    modifier: Modifier = Modifier,
+) {
+    AndroidView(
+        modifier = modifier.fillMaxSize(),
+        factory = { ctx ->
+            PreviewView(ctx).also { view ->
+                view.scaleType = PreviewView.ScaleType.FILL_CENTER
+                controller.attachPreview(view)
+            }
+        },
+    )
 
-        /** ~10 fps: the rate HandGestureMachine's 5-frame window is tuned for. */
-        const val FRAME_INTERVAL_MS = 100L
-
-        /** How long with no hand before we forget the pose (avoid phantom events). */
-        const val HAND_LOST_MS = 800L
+    DisposableEffect(controller) {
+        onDispose { controller.detachPreview() }
     }
 }

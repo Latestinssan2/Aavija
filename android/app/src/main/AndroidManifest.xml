@@ -16,8 +16,15 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
     <!-- CAMERA: Phase 5 gesture detection. The camera runs ONLY while the user
-         turns Gesture mode on (default off) — see GestureCamera.kt. -->
+         turns Gesture mode on (default off) — see GestureCamera.kt. A foreground
+         service keeps it alive while the app is in the background. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Foreground service: background gesture scanning + one-shot screenshots. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Android 13+: lets the ongoing gesture notification be visible. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Not every device that installs Aavija has a camera; the app degrades to
          the button-based UI instead of being filtered out of the store. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -38,6 +45,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Keeps the camera analysing hand gestures (and the Wi-Fi listener
+             reachable) when the activity is backgrounded. Also hosts the
+             mediaProjection type required for one-shot screenshots on Android
+             14+. The service only runs while the user has Gesture mode ON. -->
+        <service
+            android:name=".GestureShareService"
+            android:exported="false"
+            android:foregroundServiceType="camera|mediaProjection" />
     </application>
 
 </manifest>

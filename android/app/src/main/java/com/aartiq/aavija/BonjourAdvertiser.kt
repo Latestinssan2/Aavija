@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.File
 import java.net.ServerSocket
 
 /**
@@ -47,6 +48,20 @@ class BonjourAdvertiser(private val context: Context) {
         private const val TAG = "AavijaAdvertiser"
         /** Hard rule of the project: this exact service type, nothing else. */
         const val SERVICE_TYPE = "_gestureshare._tcp"
+
+        /** Remembers the phone that paired with us, so the label survives a pause. */
+        private const val DISPLAY_PREFS = "aavija_display"
+        private const val KEY_PAIRED_PHONE = "paired_phone"
+
+        /**
+         * The accept loop serves one connection at a time. Without a read
+         * timeout, a client that connects and never sends a line (or dies
+         * mid-exchange) would wedge every later heartbeat and pull forever.
+         */
+        private const val SOCKET_READ_TIMEOUT_MS = 20_000
+
+        /** Project rule: no transfer may exceed this, including screenshots. */
+        private const val MAX_FILE_BYTES = 200L * 1024L * 1024L
     }
 
     /** One small object describing what the UI should show right now. */
@@ -62,6 +77,29 @@ class BonjourAdvertiser(private val context: Context) {
         val isWaitingForPin: Boolean = false, // a Mac is pairing; PIN not typed yet
         /** The Mac the user tapped in the list. Null = nothing picked yet. */
         val selectedMac: String? = null,          // Phase 5b
+        /**
+         * A PIN prompt is genuinely live for [selectedMac].
+         *
+         * Needed because a phone that already paired with a Mac still has
+         * `isPaired == true`; a NEW phone pairing request must be able to show
+         * its PIN prompt without pretending that old pairing disappeared.
+         */
+        val pairingRequestActive: Boolean = false,
+        /**
+         * The phone that most recently paired with us as a CLIENT.
+         *
+         * Kept apart from [pairedMacName] because the pairing store has one
+         * "last device" name: an Android pairing must not make an existing
+         * paired Mac look untrusted in the Mac list.
+         */
+        val pairedPhoneName: String? = null,
+        /**
+         * True when that phone currently owns the single outgoing queue.
+         *
+         * Kept separate from [pairedPhoneName]: picking a Mac changes the send
+         * target, but the phone is still trusted (and may still push to us).
+         */
+        val phoneTargetActive: Boolean = false,
         /** PIN guesses left before a lockout. Shown so 5 is never a surprise. */
         val attemptsRemaining: Int = PinPairing.MAX_ATTEMPTS, // Phase 5b
         /** Absolute time (ms) when a lockout ends. 0 = not locked out. */
@@ -126,6 +164,50 @@ class BonjourAdvertiser(private val context: Context) {
     @Volatile
     private var pinSubmitted = false
 
+    /**
+     * Android pairing requests the user explicitly cancelled, keyed
+     * `name|requestId`. The client retries every 1.5 s (so the user has time to
+     * type the PIN), and without this set Cancel would reopen the prompt on the
+     * very next retry. A NEW pairing session from the same phone has a new
+     * request id, so it is allowed to ask again.
+     */
+    private val declinedRequests = mutableSetOf<String>()
+
+    /** The phone pairing request currently shown, if any. */
+    private var pendingAndroidRequest: Pair<String, String>? = null
+
+    /**
+     * True while this phone is acting as the CLIENT for another phone. In that
+     * mode the queue belongs to the phone peer, not to a Mac, so the Mac must
+     * not pull it out from under the gesture flow.
+     */
+    @Volatile
+    private var peerClientActive = false
+
+    /**
+     * True when the user picked a Mac as the send target. The queue then belongs
+     * to that Mac, so a phone peer that is also paired must not pull it.
+     */
+    @Volatile
+    private var macTargetActive = false
+
+    /**
+     * True when the last device paired/selected here was a phone. The queue
+     * then belongs to that phone, so a Mac that happens to be connected must
+     * not pull it out from under the gesture flow.
+     */
+    @Volatile
+    private var peerTargetActive = false
+
+    /** Called by the UI when a Mac (not a phone) is selected as the target. */
+    fun setMacTargetActive(active: Boolean) {
+        macTargetActive = active
+        if (active) {
+            peerTargetActive = false
+            _state.value = _state.value.copy(phoneTargetActive = false)
+        }
+    }
+
     /** Called by the UI every time the PIN field changes. */
     fun setPin(pin: String) {
         // Only ever accept up to 6 digits — anything else is dropped so a stray
@@ -152,7 +234,107 @@ class BonjourAdvertiser(private val context: Context) {
     fun selectMac(name: String?) {
         _typedPin.value = ""
         pinSubmitted = false
-        _state.value = _state.value.copy(selectedMac = name, lastRejection = null)
+        pendingAndroidRequest = null
+        // Tapping a device starts a pairing conversation. A device we are
+        // ALREADY paired with has no PIN prompt; a NEW one does — even if this
+        // phone is currently paired with a different device (a Mac or a phone).
+        val alreadyPairedName = _state.value.pairedMacName
+        _state.value = _state.value.copy(
+            selectedMac = name,
+            lastRejection = null,
+            pairingRequestActive = name != null && name != alreadyPairedName,
+            // Picking a Mac changes the send target, but it must NOT forget the
+            // phone that paired with us as a listener: that phone is still
+            // trusted and its row must keep saying so.
+            phoneTargetActive = if (name != null) false else _state.value.phoneTargetActive,
+        )
+    }
+
+    /**
+     * Close the PIN prompt because the user pressed Cancel.
+     *
+     * For an Android request we also remember the exact request id and answer
+     * its next retry with "declined", so the prompt cannot immediately pop
+     * back. The user can start a fresh session from the other phone whenever
+     * they want — that carries a new request id.
+     */
+    fun dismissPairingRequest() {
+        val pending = pendingAndroidRequest
+        if (pending != null) {
+            synchronized(declinedRequests) {
+                if (declinedRequests.size > 64) declinedRequests.clear()
+                declinedRequests.add(requestKey(pending.first, pending.second))
+            }
+        }
+        pendingAndroidRequest = null
+        _typedPin.value = ""
+        pinSubmitted = false
+        _state.value = _state.value.copy(
+            selectedMac = null,
+            pairingRequestActive = false,
+            isWaitingForPin = false,
+            lastRejection = null,
+        )
+    }
+
+    /** Let the client connector reserve the outgoing queue for a phone peer. */
+    fun setPeerClientActive(active: Boolean) {
+        peerClientActive = active
+    }
+
+    /**
+     * Make the phone that paired with US the queue owner again.
+     *
+     * That phone dials us, so there is no outbound connection to "activate".
+     * We only have to say the queue is its lane again; its next heartbeat sees
+     * the queued file and pulls it. Returns false when [phoneName] is not the
+     * listener-side pairing (the UI then falls back to normal client pairing).
+     */
+    fun resumePhoneTarget(phoneName: String): Boolean {
+        if (_state.value.pairedPhoneName != phoneName) return false
+        peerTargetActive = true
+        macTargetActive = false
+        _state.value = _state.value.copy(phoneTargetActive = true)
+        return true
+    }
+
+    /** The first file waiting to go to the paired peer (or Mac). */
+    fun peekOutgoing(): OutgoingFile? = outgoingQueue.peek()
+
+    /** Drop a file only after the peer confirmed it arrived. */
+    fun removeOutgoing(file: OutgoingFile) {
+        outgoingQueue.remove(file)
+    }
+
+    /**
+     * Publish a phone-to-phone transfer on the same status row the Mac
+     * transfers use, so the screen has one source of truth.
+     */
+    fun reportPeerTransfer(
+        status: String?,
+        failed: Boolean = false,
+        isSending: Boolean = false,
+        isReceiving: Boolean = false,
+    ) {
+        _state.value = _state.value.copy(
+            transferStatus = status,
+            transferFailed = failed,
+            isSending = isSending,
+            isReceiving = isReceiving,
+        )
+    }
+
+    /** A phone peer saved an image; let the existing viewer open it at once. */
+    fun onPeerFileSaved(uri: Uri?, filename: String) {
+        if (uri != null && ReceivedFiles.isImageFile(filename)) {
+            _state.value = _state.value.copy(
+                receivedImage = ReceivedImage(
+                    uri = uri,
+                    name = filename,
+                    eventId = ++receivedImageEventId,
+                ),
+            )
+        }
     }
 
     /** True while a verification may actually run. Read by the protocol. */
@@ -211,18 +393,74 @@ class BonjourAdvertiser(private val context: Context) {
     }
 
     fun queueOutgoingFile(uri: Uri, name: String, size: Long, sha256Hex: String) {
-        if (size > 200L * 1024L * 1024L) {
+        if (size > MAX_FILE_BYTES) {
             _state.value = _state.value.copy(transferFailed = true, transferStatus = "File too large (max 200 MB).")
             return
         }
+        // The user deliberately picked a file. It replaces a staged screenshot:
+        // one queue, and the newest choice wins.
+        outgoingQueue.discardScreenshots()
         outgoingQueue.enqueue(OutgoingFile(uri, name, size, sha256Hex))
         _state.value = _state.value.copy(
             transferFailed = false,
             transferStatus = if (gestureModeOn) {
                 "Ready to send $name — do GRAB/RELEASE to trigger"
             } else {
-                "Ready to send $name — waiting for the Mac"
+                "Ready to send $name — waiting for the other device"
             },
+        )
+    }
+
+    /**
+     * Stage a screenshot captured on GRAB. Returns false when it could not be
+     * queued (too large, or a transfer is already using the queue).
+     */
+    fun queueScreenshot(file: File, name: String, size: Long, sha256Hex: String): Boolean {
+        if (size > MAX_FILE_BYTES) {
+            _state.value = _state.value.copy(
+                transferFailed = true,
+                transferStatus = "Screenshot is larger than the 200 MB limit.",
+            )
+            return false
+        }
+        if (_state.value.isSending) return false
+
+        outgoingQueue.replaceScreenshot(
+            OutgoingFile(
+                uri = Uri.fromFile(file),
+                name = name,
+                size = size,
+                sha256Hex = sha256Hex,
+                isScreenshot = true,
+                localFile = file,
+            ),
+        )
+        _state.value = _state.value.copy(
+            transferFailed = false,
+            transferStatus = if (gestureModeOn) {
+                "Screenshot ready — RELEASE on the other device within 10 s"
+            } else {
+                "Screenshot ready — waiting for the other device"
+            },
+        )
+        return true
+    }
+
+    /** True when GRAB may replace the queue with a screenshot. */
+    fun canHoldScreenshot(): Boolean = outgoingQueue.peek()?.let { it.isScreenshot } ?: true
+
+    /** Forget any staged screenshot (gesture mode off). */
+    fun discardScreenshots() {
+        // Never delete the file while the sender is reading it.
+        if (_state.value.isSending) return
+        outgoingQueue.discardScreenshots()
+    }
+
+    /** Let the runtime publish a plain status (e.g. "Capturing screenshot…"). */
+    fun reportStatus(message: String, failed: Boolean = false) {
+        _state.value = _state.value.copy(
+            transferStatus = message,
+            transferFailed = failed,
         )
     }
 
@@ -251,6 +489,10 @@ class BonjourAdvertiser(private val context: Context) {
             lockedUntilMs = pairingStore.lockedUntilMs(),
             isPaired = alreadyPaired,
             pairedMacName = if (alreadyPaired) pairingStore.pairedMacName() else null,
+            // A phone that paired with US lives only in AdState, so without
+            // this it vanished every time the app was paused and restarted.
+            pairedPhoneName = displayPrefs().getString(KEY_PAIRED_PHONE, null),
+            phoneTargetActive = peerTargetActive,
             lastPairing = if (alreadyPaired) "Paired successfully" else null,
         )
 
@@ -271,6 +513,10 @@ class BonjourAdvertiser(private val context: Context) {
                 this.serviceName = serviceName
                 this.serviceType = SERVICE_TYPE
                 this.port = port
+                // A random per-install id. Two identical phone models share a
+                // Bonjour name, so this is what lets PeerDiscovery skip OUR OWN
+                // advertisement without ever asking another phone.
+                setAttribute("id", DeviceIdentity.id(context))
             }
 
             // 4) Register it. The listener tells us if it worked.
@@ -323,6 +569,10 @@ class BonjourAdvertiser(private val context: Context) {
         releaseMulticastLock()
         _state.value = AdState()
     }
+
+    /** Small private store for display-only labels that outlive a pause. */
+    private fun displayPrefs() = context.applicationContext
+        .getSharedPreferences(DISPLAY_PREFS, Context.MODE_PRIVATE)
 
     private fun acquireMulticastLock() {
         try {
@@ -381,6 +631,9 @@ class BonjourAdvertiser(private val context: Context) {
      * returns — pairing is its own short-lived exchange.
      */
     private fun handlePairingConnection(conn: java.net.Socket) {
+        // One stalled client must not block the single accept thread forever.
+        runCatching { conn.soTimeout = SOCKET_READ_TIMEOUT_MS }
+
         // Buffered ONCE, and the same buffer carries both the text lines and the
         // raw file bytes. A second reader (say, a BufferedReader) would happily
         // swallow the first bytes of the file while hunting for its newline —
@@ -399,7 +652,21 @@ class BonjourAdvertiser(private val context: Context) {
             pinSubmitted = ::isPinSubmitted,
             typedPin = { _typedPin.value },
         )
-        protocol.setOutgoingCountProvider { outgoingQueue.count() }
+        protocol.setOutgoingCountProvider { fromPhone ->
+            // One queue, one owner. The same rule gates the heartbeat count and
+            // the actual `receive` handler in receiveFile().
+            if (PeerProtocol.queueVisibleTo(
+                    fromPhone = fromPhone,
+                    peerClientActive = peerClientActive,
+                    peerTargetActive = peerTargetActive,
+                    macTargetActive = macTargetActive,
+                )
+            ) {
+                outgoingQueue.count()
+            } else {
+                0
+            }
+        }
         // Phase 7: while Gesture mode is ON, the Mac must NOT pull a queued file
         // just because it exists. It waits for a grab/release handshake.
         protocol.setGestureGateProvider { gestureModeOn }
@@ -420,6 +687,39 @@ class BonjourAdvertiser(private val context: Context) {
         }
         Log.i(TAG, "Pairing message: $line")
 
+        // Android-to-Android: the CLIENT phone cannot show a PIN prompt on this
+        // phone, so an incoming phone pairing request opens one here. The user
+        // types the PIN that the client phone is displaying, exactly as they
+        // would type a Mac's PIN.
+        if (PeerProtocol.isAndroidCancel(line)) {
+            handleAndroidCancel(line)
+            runCatching {
+                FileTransfer.writeLine(
+                    output,
+                    JSONObject().put("type", "cancelled").toString(),
+                )
+            }
+            return
+        }
+        if (PeerProtocol.isAndroidPair(line)) {
+            val key = requestKey(
+                PeerProtocol.senderName(line),
+                PeerProtocol.requestId(line),
+            )
+            val declined = synchronized(declinedRequests) {
+                key in declinedRequests
+            }
+            if (declined) {
+                FileTransfer.writeLine(
+                    output,
+                    JSONObject().put("type", "rejected").put("reason", "declined").toString(),
+                )
+                pinSubmitted = false
+                return
+            }
+            maybeShowAndroidPairing(line)
+        }
+
         // 3) Verify and reply.
         val reply = protocol.handle(line)
         FileTransfer.writeLine(output, reply)
@@ -427,6 +727,37 @@ class BonjourAdvertiser(private val context: Context) {
 
         // 4) Publish the outcome so the phone's screen can show it.
         publishPairingOutcome(reply)
+
+        // The device that just proved itself becomes the queue owner. This is
+        // the single-lane rule: a Mac must not pull a file the user meant for a
+        // phone, and a phone must not pull one meant for a Mac.
+        val androidSender = if (PeerProtocol.isAndroidPair(line)) {
+            PeerProtocol.senderName(line)
+        } else {
+            null
+        }
+        val fromPhone = androidSender != null || PeerProtocol.isAndroidAuth(line)
+        if (isPairedReply(reply)) {
+            if (fromPhone) {
+                peerTargetActive = true
+                macTargetActive = false
+                if (androidSender != null) {
+                    displayPrefs().edit().putString(KEY_PAIRED_PHONE, androidSender).apply()
+                    _state.value = _state.value.copy(
+                        pairedPhoneName = androidSender,
+                        phoneTargetActive = true,
+                    )
+                } else {
+                    // A returning phone proved its token (push/pull): it is the
+                    // device currently using the queue.
+                    _state.value = _state.value.copy(phoneTargetActive = true)
+                }
+            } else {
+                setMacTargetActive(true)
+                // Keep any listener-side phone pairing remembered: trust and
+                // "which queue" are separate questions.
+            }
+        }
 
         // 5) A Mac that JUST authenticated is trusted — it may follow with a
         //    file. An unknown token never gets this far, so file bytes are
@@ -442,6 +773,69 @@ class BonjourAdvertiser(private val context: Context) {
         false
     }
 
+    /** Did this reply prove a device's identity (first pairing OR token auth)? */
+    private fun isPairedReply(reply: String): Boolean = try {
+        val type = JSONObject(reply).optString("type")
+        type == "paired" || type == "authenticated"
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
+     * Open this phone's PIN prompt for an incoming Android pairing request.
+     *
+     * We do NOT override a device the user explicitly picked: [PairingProtocol]
+     * will answer "not the selected device" in that case, which is the same
+     * protection a second Mac already gets.
+     */
+    private fun maybeShowAndroidPairing(line: String) {
+        val sender = PeerProtocol.senderName(line)
+        if (sender.isEmpty()) return
+
+        val current = _state.value
+        // Never yank a live prompt away from the device the user is typing a
+        // PIN for. That would reset the field mid-attempt and turn a correct
+        // PIN into a baffling failure. Once that prompt closes (paired,
+        // cancelled, or rejected) a phone may take the stage.
+        if (current.pairingRequestActive && current.selectedMac != sender) return
+
+        val requestId = PeerProtocol.requestId(line)
+        val changed = current.selectedMac != sender
+        if (changed) {
+            // A different device is asking: drop last session's PIN cleanly.
+            _typedPin.value = ""
+            pinSubmitted = false
+        }
+        pendingAndroidRequest = sender to requestId
+        _state.value = current.copy(
+            selectedMac = sender,
+            pairingRequestActive = true,
+            lastRejection = if (changed) null else current.lastRejection,
+        )
+    }
+
+    /** The client phone cancelled its pairing session; close our prompt too. */
+    private fun handleAndroidCancel(line: String) {
+        val pending = pendingAndroidRequest ?: return
+        val requestId = PeerProtocol.requestId(line)
+        if (requestId.isNotEmpty() && pending.second.isNotEmpty() &&
+            requestId != pending.second
+        ) {
+            return
+        }
+        pendingAndroidRequest = null
+        _typedPin.value = ""
+        pinSubmitted = false
+        _state.value = _state.value.copy(
+            selectedMac = null,
+            pairingRequestActive = false,
+            isWaitingForPin = false,
+        )
+    }
+
+    private fun requestKey(name: String, requestId: String): String =
+        "$name\u0000$requestId"
+
     /** A file header is on the wire; check it, then stream the body. */
     private fun receiveFile(input: BufferedInputStream, output: BufferedOutputStream) {
         val headerLine = FileTransfer.readLine(input)
@@ -453,7 +847,20 @@ class BonjourAdvertiser(private val context: Context) {
         // Try to parse; might be a request to receive (phone->Mac) rather than a file header?
         val obj = try { JSONObject(headerLine) } catch (_: Exception) { null }
         if (obj != null && obj.optString("type") == "receive") {
-            // Mac wants to fetch a queued file from phone → send it
+            val fromPhone = obj.optString("platform") == PeerProtocol.PLATFORM_ANDROID
+            if (!PeerProtocol.queueVisibleTo(
+                    fromPhone = fromPhone,
+                    peerClientActive = peerClientActive,
+                    peerTargetActive = peerTargetActive,
+                    macTargetActive = macTargetActive,
+                )
+            ) {
+                // The queue belongs to a different target; tell the caller
+                // there is nothing for it instead of sending someone else's file.
+                runCatching { FileTransfer.writeLine(output, JSONObject().put("type", "idle").toString()) }
+                return
+            }
+            // The queue owner wants to fetch a queued file from this phone → send it
             sendQueuedFile(input, output)
             return
         }
@@ -624,38 +1031,58 @@ class BonjourAdvertiser(private val context: Context) {
         val wrongPin = (type == "rejected" && reason == "wrong pin")
 
         val pairing = PinPairing(pairingStore) { System.currentTimeMillis() }
+        val alreadyPaired = pairing.hasPairedToken()
 
-        val (status, paired) = when {
+        val (status, justPaired) = when {
             type == "paired" -> "Paired successfully" to true
-            type == "authenticated" -> "Mac reconnected (token accepted)" to true
+            type == "authenticated" -> "Reconnected (token accepted)" to true
             type == "locked" -> "Too many wrong PINs — locked out" to false
             waiting -> "Waiting for you to press Submit" to false
             reason == "not the selected device" ->
-                "A different Mac tried to pair — tap it in the list first" to false
+                "A different device tried to pair — tap it in the list first" to false
             type == "rejected" -> "Rejected: $reason" to false
             else -> return
         }
 
         // Every real verdict ends the armed Submit: the next attempt must only
-        // happen when the user presses Submit again.
-        pinSubmitted = false
+        // happen when the user presses Submit again. A "waiting" reply is the
+        // one exception: it means this connection checked BEFORE the user's
+        // Submit landed, so clearing it here would silently eat that press and
+        // leave the user staring at a phone that never verifies.
+        if (!waiting) pinSubmitted = false
+        if (justPaired) pendingAndroidRequest = null
 
         // A success clears any earlier complaint; a failure replaces it. This
         // is the line the popup keeps showing, so it has to be exact.
         val rejection = when {
-            type == "paired" || type == "authenticated" -> null
+            justPaired -> null
             type == "locked" -> "Locked out"
             wrongPin -> "Wrong PIN"
             waiting -> _state.value.lastRejection // keep the old complaint visible
             else -> _state.value.lastRejection
         }
 
+        // A wrong PIN from a second phone must NOT erase an existing pairing
+        // with a Mac. `isPaired` means "we have SOME trusted token", not "this
+        // one attempt just succeeded".
+        val nowPaired = justPaired || alreadyPaired
+        val promptActive = when {
+            justPaired || type == "locked" -> false
+            waiting || wrongPin -> true
+            else -> _state.value.pairingRequestActive
+        }
+
         _state.value = _state.value.copy(
             lastPairing = status,
-            isPaired = paired,
+            isPaired = nowPaired,
             // On success, read back the name the protocol just saved.
-            pairedMacName = if (paired) pairingStore.pairedMacName() else _state.value.pairedMacName,
+            pairedMacName = if (nowPaired) {
+                pairingStore.pairedMacName() ?: _state.value.pairedMacName
+            } else {
+                _state.value.pairedMacName
+            },
             isWaitingForPin = waiting,
+            pairingRequestActive = promptActive,
             attemptsRemaining = pairing.attemptsRemaining(),
             lockedUntilMs = pairingStore.lockedUntilMs(),
             wrongPinCount = _state.value.wrongPinCount + if (wrongPin) 1 else 0,

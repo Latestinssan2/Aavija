@@ -109,9 +109,10 @@ class PairingProtocol(
      * the two devices' gestures; the phone only has to report its own.
      */
     private fun handlePing(obj: JSONObject): String {
+        val fromPhone = obj.optString("platform") == PeerProtocol.PLATFORM_ANDROID
         val pong = JSONObject()
             .put("type", "pong")
-            .put("outgoing", outgoingCount())
+            .put("outgoing", outgoingCount(fromPhone))
 
         // Gestures are private. A pong only carries them when the ping proves
         // it holds the session token this phone minted at pairing. Reachability
@@ -202,7 +203,11 @@ class PairingProtocol(
                 // Remember WHICH Mac this token is for. After the app is closed
                 // and reopened there is no live connection to ask, so this is
                 // how the screen can still name the Mac you paired with.
-                store.rememberPairedMac(sender)
+                // Android clients are not Macs: the Mac list must keep the Mac
+                // it remembers, so their name lives in AdState instead.
+                if (obj.optString("platform") != PeerProtocol.PLATFORM_ANDROID) {
+                    store.rememberPairedMac(sender)
+                }
                 JSONObject()
                     .put("type", "paired")
                     .put("token", PairingCrypto.toHex(result.sessionToken))
@@ -239,10 +244,17 @@ class PairingProtocol(
         }
     }
 
-    private var outgoingCount: () -> Int = { 0 }
+    private var outgoingCount: (Boolean) -> Int = { 0 }
 
-    /** Allow caller to tell us how many files are queued to send to Mac (Phase 4b). */
-    fun setOutgoingCountProvider(provider: () -> Int) {
+    /**
+     * Allow the caller to say how many files are queued to send.
+     *
+     * The flag is `true` when the heartbeat came from another PHONE. A phone's
+     * pull and a Mac's pull share one queue, so the listener reports 0 to a
+     * phone when the user has picked a Mac as the target (and vice versa via
+     * [BonjourAdvertiser.setPeerClientActive]).
+     */
+    fun setOutgoingCountProvider(provider: (fromPhone: Boolean) -> Int) {
         outgoingCount = provider
     }
 

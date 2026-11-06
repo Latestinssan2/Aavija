@@ -1,6 +1,7 @@
 package com.aartiq.aavija
 
 import android.net.Uri
+import java.io.File
 import java.security.MessageDigest
 
 /**
@@ -9,13 +10,24 @@ import java.security.MessageDigest
  * We compute its SHA-256 at enqueue time so the header can be sent without
  * re-reading the file later. The URI is stored persistably so we can still
  * read it when the Mac pulls it a few seconds later.
+ *
+ * Screenshot sharing adds [isScreenshot] and [localFile]: the PNG lives in the
+ * app cache, never in the public Downloads folder, and is deleted as soon as
+ * it is delivered (or replaced by a newer grab).
  */
 data class OutgoingFile(
     val uri: Uri,
     val name: String,
     val size: Long,
     val sha256Hex: String,
-)
+    val isScreenshot: Boolean = false,
+    val localFile: File? = null,
+) {
+    /** Remove the temporary PNG, if this queue item owns one. */
+    fun cleanup() {
+        runCatching { localFile?.delete() }
+    }
+}
 
 /**
  * A tiny in-memory queue of files waiting to go to the paired Mac.
@@ -37,12 +49,34 @@ class OutgoingQueue {
 
     /** Drop a file only once it has actually been delivered. */
     fun remove(file: OutgoingFile) {
-        queue.remove(file)
+        if (queue.remove(file)) file.cleanup()
+    }
+
+    /**
+     * Replace any staged screenshot with a fresh one. The Mac only replaces a
+     * screenshot, never a file the user deliberately held, and neither do we.
+     */
+    fun replaceScreenshot(file: OutgoingFile) {
+        discardScreenshots()
+        queue.add(file)
+    }
+
+    /** Throw away staged screenshots (gesture mode off / a new file was picked). */
+    fun discardScreenshots() {
+        val iterator = queue.iterator()
+        while (iterator.hasNext()) {
+            val item = iterator.next()
+            if (item.isScreenshot) {
+                iterator.remove()
+                item.cleanup()
+            }
+        }
     }
 
     fun count(): Int = queue.size
 
     fun clear() {
+        queue.forEach { it.cleanup() }
         queue.clear()
     }
 
