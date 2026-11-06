@@ -105,9 +105,61 @@ jobs:
           name: aavija-macos
           path: artifacts/*
 
+  build-windows:
+    name: Build Windows EXE and MSIX
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore windows/AavijaWindows/AavijaWindows.csproj
+
+      - name: Build Windows EXE
+        run: |
+          dotnet publish windows/AavijaWindows/AavijaWindows.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -o artifacts/windows-exe
+
+      - name: Prepare MSIX
+        shell: pwsh
+        run: |
+          $staging = "artifacts/windows-msix"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "artifacts/windows-exe/*" $staging -Recurse -Force
+          Copy-Item "windows/AavijaWindows/Package.appxmanifest" $staging/AppxManifest.xml -Force
+          # MakeAppx requires logo assets; copy them if present.
+          if (Test-Path "windows/AavijaWindows/Assets") {
+            New-Item -ItemType Directory -Force -Path "$staging/Assets" | Out-Null
+            Copy-Item "windows/AavijaWindows/Assets/*" "$staging/Assets" -Recurse -Force
+          }
+          # Create an unsigned MSIX for distribution/testing.
+          $sdk = "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.0.22621.0\x64"
+          if (-not (Test-Path "$sdk\makeappx.exe")) {
+            $sdk = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName + "\x64"
+          }
+          & "$sdk\makeappx.exe" pack /d $staging /p artifacts/Aavija-windows.msix /nv
+          if ($LASTEXITCODE -ne 0) { throw "MakeAppx failed" }
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aavija-windows
+          path: |
+            artifacts/windows-exe/Aavija.exe
+            artifacts/Aavija-windows.msix
+
   publish-release:
     name: Publish GitHub Release
-    needs: [build-android, build-macos]
+    needs: [build-android, build-macos, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -157,5 +209,7 @@ jobs:
             dist/Aavija.apk
             dist/Aavija-macOS.dmg
             dist/Aavija-macOS.app.zip
+            dist/Aavija.exe
+            dist/Aavija-windows.msix
           draft: false
           prerelease: false
