@@ -2,14 +2,30 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Aavija — Gesture AirDrop over Wi-Fi"
-        Height="720" Width="460"
+        Height="760" Width="520"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="20">
         <StackPanel>
-            <TextBlock Text="Aavija" FontSize="28" FontWeight="Bold" />
-            <TextBlock Text="Windows native client (scaffold)" Margin="0,4,0,20" Foreground="Gray" />
-            <Button Content="Capture screen (WGC)" Click="CaptureScreen_Click" Margin="0,0,0,10" />
-            <Button Content="Capture active window (WGC)" Click="CaptureActiveWindow_Click" Margin="0,0,0,10" />
+            <TextBlock Text="Aavija (Windows native)" FontSize="24" FontWeight="Bold" />
+            <TextBlock Text="Pairing + file sharing + screenshots" Margin="0,4,0,16" Foreground="Gray" />
+
+            <TextBlock Text="Phone host" />
+            <TextBox x:Name="HostBox" Text="192.168.1.10" Margin="0,0,0,8" />
+            <TextBlock Text="Port" />
+            <TextBox x:Name="PortBox" Text="0" Margin="0,0,0,8" />
+            <TextBlock Text="PIN (shown on this PC)" />
+            <TextBox x:Name="PinBox" Text="" Margin="0,0,0,8" />
+            <TextBlock Text="Request id (any)" />
+            <TextBox x:Name="RequestIdBox" Text="req1" Margin="0,0,0,12" />
+
+            <WrapPanel Margin="0,0,0,12">
+                <Button Content="Pair" Click="Pair_Click" Margin="0,0,8,8" />
+                <Button Content="Push file" Click="Push_Click" Margin="0,0,8,8" />
+                <Button Content="Pull file" Click="Pull_Click" Margin="0,0,8,8" />
+                <Button Content="Capture screen" Click="CaptureScreen_Click" Margin="0,0,8,8" />
+                <Button Content="Capture window" Click="CaptureActiveWindow_Click" Margin="0,0,8,8" />
+            </WrapPanel>
+
             <TextBlock x:Name="StatusText" Text="Ready." TextWrapping="Wrap" />
         </StackPanel>
     </Grid>
