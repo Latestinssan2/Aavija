@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">આવી જા</string>
+    <string name="discoverable">આ વાઇ-ફાઇ પર શોધી શકાય છે</string>
+    <string name="device">ઉપકરણ</string>
+    <string name="port">પોર્ટ</string>
+    <string name="available_macs">ઉપલબ્ધ મેક</string>
+    <string name="other_phones">અન્ય ફોન</string>
+    <string name="gesture_mode">ગેસ્ચર મોડ</string>
+    <string name="gesture_mode_desc">કેમેરા હાથ ટ્રેક કરે છે</string>
+    <string name="magic_blackout">મેજિક બ્લેકઆઉટ સ્ક્રીન</string>
+    <string name="send_file">ફાઇલ મોકલો</string>
+    <string name="how_to_share">કેવી રીતે શેર કરવું</string>
+    <string name="to_receive">પ્રાપ્ત કરવા: ટાર્ગેટ પર GRAB, પછી અહીં RELEASE.</string>
+    <string name="to_send">મોકલવા: અહીં GRAB, પછી ટાર્ગેટ પર RELEASE.</string>
+    <string name="to_screenshot">સ્ક્રીનશોટ મોકલવા: અહીં GRAB સ્ક્રીન કેપ્ચર કરે છે.</string>
+    <string name="background_works">બેકગ્રાઉન્ડમાં પણ ગેસ્ચર કામ કરે છે.</string>
+    <string name="enable_screenshots">સ્ક્રીનશોટ શેરિંગ ચાલુ કરો</string>
+    <string name="screenshots_ready">સ્ક્રીનશોટ તૈયાર</string>
+    <string name="screenshots_off">સ્ક્રીન કેપ્ચર બંધ છે</string>
+</resources>

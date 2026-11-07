@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Aavija</string>
+    <string name="discoverable">Discoverable on this Wi-Fi</string>
+    <string name="device">Device</string>
+    <string name="port">Port</string>
+    <string name="available_macs">Available Macs</string>
+    <string name="other_phones">Other Phones</string>
+    <string name="gesture_mode">Gesture Mode</string>
+    <string name="gesture_mode_desc">Camera tracks hands in real-time</string>
+    <string name="magic_blackout">Magic Blackout Screen</string>
+    <string name="send_file">Send file</string>
+    <string name="how_to_share">How to share</string>
+    <string name="to_receive">To receive: GRAB on target, then RELEASE here.</string>
+    <string name="to_send">To send: GRAB here, then RELEASE on target.</string>
+    <string name="to_screenshot">To send a screenshot: GRAB here captures your screen.</string>
+    <string name="background_works">Gestures keep working in the background.</string>
+    <string name="enable_screenshots">Enable screenshot sharing</string>
+    <string name="screenshots_ready">Screenshots ready</string>
+    <string name="screenshots_off">Screen capture is off</string>
+</resources>

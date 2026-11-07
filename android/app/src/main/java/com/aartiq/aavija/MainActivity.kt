@@ -14,6 +14,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -118,6 +119,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var peerConnector: PeerConnector
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
 
         // One runtime for the whole process: the foreground service keeps the
@@ -141,6 +143,7 @@ class MainActivity : ComponentActivity() {
                     macDiscovery = macDiscovery,
                     peerDiscovery = peerDiscovery,
                     peerConnector = peerConnector,
+                    initialBlackout = intent.getBooleanExtra("enter_blackout", false),
                     themeMode = themeMode,
                     onThemeToggle = {
                         themeMode = themeMode.next()
@@ -186,6 +189,7 @@ fun AdvertiserScreen(
     macDiscovery: MacDiscovery,
     peerDiscovery: PeerDiscovery,
     peerConnector: PeerConnector,
+    initialBlackout: Boolean = false,
     themeMode: AppThemeMode,
     onThemeToggle: () -> Unit,
 ) {
@@ -228,7 +232,7 @@ fun AdvertiserScreen(
         if (state.wrongPinCount > 0) buzzWrongPin(context)
     }
 
-    var isBlackoutMode by rememberSaveable { mutableStateOf(false) }
+    var isBlackoutMode by rememberSaveable { mutableStateOf(initialBlackout) }
     var showBlackoutHint by remember { mutableStateOf(false) }
     var gestureWasOnBeforeBlackout by remember { mutableStateOf(false) }
     var blackoutCaptureProblem by remember { mutableStateOf<String?>(null) }

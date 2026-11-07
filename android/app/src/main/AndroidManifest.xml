@@ -32,7 +32,7 @@
     <application
         android:label="Aavija"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:theme="@style/Theme.Aavija.Splash"
         android:allowBackup="true"
         android:supportsRtl="true">
 
@@ -54,6 +54,17 @@
             android:name=".GestureShareService"
             android:exported="false"
             android:foregroundServiceType="camera|mediaProjection" />
+
+        <receiver
+            android:name=".BlackoutWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/blackout_widget_info" />
+        </receiver>
     </application>
 
 </manifest>
