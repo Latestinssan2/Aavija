@@ -18,6 +18,13 @@
             <TextBlock Text="Request id (any)" />
             <TextBox x:Name="RequestIdBox" Text="req1" Margin="0,0,0,12" />
 
+            <TextBlock Text="Listener PIN (for incoming pairing)" />
+            <TextBox x:Name="ListenerPinBox" Text="" Margin="0,0,0,8" />
+            <WrapPanel Margin="0,0,0,12">
+                <Button Content="Start listener" Click="StartListener_Click" Margin="0,0,8,8" />
+                <Button Content="Stop listener" Click="StopListener_Click" Margin="0,0,8,8" />
+            </WrapPanel>
+
             <WrapPanel Margin="0,0,0,12">
                 <Button Content="Pair" Click="Pair_Click" Margin="0,0,8,8" />
                 <Button Content="Push file" Click="Push_Click" Margin="0,0,8,8" />
