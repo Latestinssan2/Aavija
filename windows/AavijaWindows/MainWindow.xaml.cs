@@ -10,12 +10,20 @@ public partial class MainWindow : Window
 {
     private readonly PairingStore _store = new();
     private readonly PhoneClient _client;
+    private readonly GestureController _gesture = new();
 
     public MainWindow()
     {
         InitializeComponent();
         _client = new PhoneClient(_store, () => Environment.MachineName);
         _client.StatusChanged += msg => Dispatcher.Invoke(() => StatusText.Text = msg);
+        _gesture.GestureDetected += g => Dispatcher.Invoke(() =>
+        {
+            StatusText.Text = $"Gesture: {g}";
+            _client.OnLocalGesture(g);
+        });
+        Loaded += (_, _) => _gesture.Start();
+        Closed += (_, _) => _gesture.Stop();
     }
 
     private PhonePeer CurrentPeer()
@@ -32,6 +40,7 @@ public partial class MainWindow : Window
         StatusText.Text = "Pairing...";
         var (ok, token) = await _client.PairAsync(peer, pin, req);
         StatusText.Text = ok ? $"Paired. Token: {token?[..8]}..." : "Pairing failed.";
+        if (ok && token is not null) _client.StartHeartbeat(peer, token);
     }
 
     private async void Push_Click(object sender, RoutedEventArgs e)

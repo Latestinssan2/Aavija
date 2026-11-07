@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace Aavija.Core;
 
@@ -13,7 +14,10 @@ public class PhoneClient
 {
     private readonly PairingStore _store;
     private readonly Func<string> _ourName;
+    private readonly GestureMatcher _matcher = new();
+    private readonly GestureReporter _reporter = new(() => Environment.TickCount64);
     public event Action<string>? StatusChanged;
+    public event Action<string>? GestureDetected;
 
     public PhoneClient(PairingStore store, Func<string> ourName)
     {
@@ -77,6 +81,63 @@ public class PhoneClient
             StatusChanged?.Invoke($"Pairing error: {ex.Message}");
             return (false, null);
         }
+    }
+
+    public void OnLocalGesture(string kind)
+    {
+        var k = kind == "GRAB" ? GestureMatcher.Kind.Grab : GestureMatcher.Kind.Release;
+        var action = _matcher.OnLocal(k, Environment.TickCount64);
+        if (k == GestureMatcher.Kind.Grab) _reporter.Record(GestureEventType.Grab);
+        else _reporter.Record(GestureEventType.Release);
+        if (action == GestureMatcher.Action.PullFromPeer) _ = Task.Run(() => PullFileAsync(CurrentPeer!, Path.GetTempPath()));
+        else if (action == GestureMatcher.Action.SendToPeer) _ = Task.Run(() => PushQueuedAsync());
+    }
+
+    private PhonePeer? CurrentPeer { get; set; }
+    private string? CurrentToken { get; set; }
+
+    private async Task PushQueuedAsync()
+    {
+        // Placeholder: real implementation would push the staged screenshot/file.
+        StatusChanged?.Invoke("Gesture matched — send triggered.");
+    }
+
+    public void HandleRemoteGesture(Protocol.Pong pong)
+    {
+        if (pong.Gesture is null) return;
+        var action = _matcher.OnRemote(pong.Gesture, Environment.TickCount64);
+        if (action == GestureMatcher.Action.PullFromPeer) _ = Task.Run(() => PullFileAsync(CurrentPeer!, Path.GetTempPath()));
+        else if (action == GestureMatcher.Action.SendToPeer) _ = Task.Run(() => PushQueuedAsync());
+    }
+
+    public void StartHeartbeat(PhonePeer peer, string tokenHex)
+    {
+        CurrentPeer = peer;
+        CurrentToken = tokenHex;
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                try
+                {
+                    var (client, stream, _) = await ConnectAsync(peer);
+                    using (client) using (stream)
+                    {
+                        var salt = Protocol.ParseChallengeSalt(await ReadLineAsync(stream));
+                        if (salt is null) { await Task.Delay(3000); continue; }
+                        await WriteLineAsync(stream, Protocol.PingMessage(tokenHex));
+                        var pong = Protocol.ParsePong(await ReadLineAsync(stream));
+                        if (pong is not null)
+                        {
+                            HandleRemoteGesture(pong);
+                            GestureDetected?.Invoke(pong.Gesture?.Type?.ToUpperInvariant() ?? "");
+                        }
+                    }
+                }
+                catch { }
+                await Task.Delay(2000);
+            }
+        });
     }
 
     public async Task PushFileAsync(PhonePeer peer, string filePath)
