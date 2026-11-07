@@ -1,0 +1,1 @@
+Added background gesture service and screenshot sharing. Added splash screen, localization, and blackout widget.
