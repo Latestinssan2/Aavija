@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aavija Docs</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+  <div class="max-w-4xl mx-auto px-6 py-16">
+    <h1 class="text-4xl font-bold mb-6">Aavija Documentation</h1>
+    <nav class="mb-10 space-x-4 text-sm">
+      <a href="#getting-started" class="text-cyan-400">Getting Started</a>
+      <a href="#build" class="text-cyan-400">Build</a>
+      <a href="#protocol" class="text-cyan-400">Protocol</a>
+      <a href="#contributing" class="text-cyan-400">Contributing</a>
+      <a href="#privacy" class="text-cyan-400">Privacy</a>
+    </nav>
+
+    <section id="getting-started" class="mb-12">
+      <h2 class="text-2xl font-semibold mb-3">Getting Started</h2>
+      <p>Aavija is a native hand-gesture file sharing app between Android, macOS, and Windows over local Wi-Fi. No cloud, no tracking.</p>
+      <ul class="list-disc ml-6 mt-3 space-y-1">
+        <li>Install the app on two devices on the same Wi-Fi.</li>
+        <li>On Android, open Aavija and make it discoverable.</li>
+        <li>On macOS/Windows, open Aavija and pair using the 6-digit PIN.</li>
+        <li>Turn on Gesture Mode to use GRAB/RELEASE sharing.</li>
+      </ul>
+    </section>
+
+    <section id="build" class="mb-12">
+      <h2 class="text-2xl font-semibold mb-3">Build from Source</h2>
+      <pre class="bg-slate-900 p-4 rounded-lg overflow-x-auto text-sm">Android:  cd android && ./gradlew assembleDebug
+macOS:    cd mac && xcodegen generate --spec project.yml && xcodebuild ...
+Windows:  dotnet build windows/AavijaWindows/AavijaWindows.csproj
+    <section id="protocol" class="mb-12">
+      <h2 class="text-2xl font-semibold mb-3">Protocol</h2>
+      <p>Phones are the TLS listeners. Desktops are clients. Pairing uses a 6-digit PIN bound to the certificate fingerprint. File transfers require token authentication before bytes. See <a href="https://github.com/Latestinssan2/Aavija/blob/main/docs/PROTOCOL.md" class="text-cyan-400">docs/PROTOCOL.md</a>.</p>
+    </section>
+
+    <section id="contributing" class="mb-12">
+      <h2 class="text-2xl font-semibold mb-3">Contributing</h2>
+      <p>See <a href="https://github.com/Latestinssan2/Aavija/blob/main/CONTRIBUTING.md" class="text-cyan-400">CONTRIBUTING.md</a>. Open a PR against <code>main</code>. All PRs are reviewed before merge.</p>
+    </section>
+
+    <section id="privacy" class="mb-12">
+      <h2 class="text-2xl font-semibold mb-3">Privacy</h2>
+      <p>No cloud, no tracking. All transfers are local and encrypted. See <a href="/privacy" class="text-cyan-400">Privacy Policy</a>.</p>
+    </section>
+
+    <footer class="mt-16 text-sm text-slate-500">
+      <a href="/" class="text-cyan-400">Back to home</a>
+    </footer>
+  </div>
+</body>
+</html>
