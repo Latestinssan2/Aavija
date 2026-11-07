@@ -1,8 +1,13 @@
 package com.aartiq.aavija
 
 import android.content.ContentValues
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
+import androidx.core.app.NotificationCompat
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -921,13 +926,19 @@ class BonjourAdvertiser(private val context: Context) {
                 // than the same one coming back on a recomposition.
                 AavijaSounds.transferComplete()
                 if (savedUri != null && ReceivedFiles.isImageFile(header.filename)) {
-                    _state.value = saved.copy(
-                        receivedImage = ReceivedImage(
-                            uri = savedUri,
-                            name = header.filename,
-                            eventId = ++receivedImageEventId,
-                        ),
+                    val img = ReceivedImage(
+                        uri = savedUri,
+                        name = header.filename,
+                        eventId = ++receivedImageEventId,
                     )
+                    _state.value = saved.copy(receivedImage = img)
+                    // If the app is in the background, surface the photo via a
+                    // notification so the user can view it without opening Aavija.
+                    val runtime = AavijaRuntime.get(context)
+                    if (!runtime.uiVisible) {
+                        runtime.pendingReceivedImage.value = img
+                        postReceivedImageNotification(context, savedUri, header.filename)
+                    }
                 } else {
                     _state.value = saved
                 }
@@ -1089,4 +1100,36 @@ class BonjourAdvertiser(private val context: Context) {
             lastRejection = rejection,
         )
     }
+}
+
+/** Post a notification so a received image can be viewed without opening Aavija. */
+private fun postReceivedImageNotification(context: Context, uri: android.net.Uri, name: String) {
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    val channelId = "aavija_images"
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(channelId, "Received images", NotificationManager.IMPORTANCE_DEFAULT)
+        manager.createNotificationChannel(channel)
+    }
+    val intent = Intent(context, MainActivity::class.java).apply {
+        putExtra("show_image_uri", uri.toString())
+        putExtra("show_image_name", name)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val pending = PendingIntent.getActivity(
+        context, 0, intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    val bitmap = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+    }.getOrNull()
+    val builder = NotificationCompat.Builder(context, channelId)
+        .setSmallIcon(android.R.drawable.ic_menu_gallery)
+        .setContentTitle("Aavija")
+        .setContentText("New image received: $name")
+        .setContentIntent(pending)
+        .setAutoCancel(true)
+    if (bitmap != null) {
+        builder.setStyle(NotificationCompat.BigPictureStyle().bigPicture(bitmap))
+    }
+    manager.notify(4202, builder.build())
 }

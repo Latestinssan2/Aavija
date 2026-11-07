@@ -14,6 +14,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -144,6 +145,8 @@ class MainActivity : ComponentActivity() {
                     peerDiscovery = peerDiscovery,
                     peerConnector = peerConnector,
                     initialBlackout = intent.getBooleanExtra("enter_blackout", false),
+                    initialImageUri = intent.getStringExtra("show_image_uri"),
+                    initialImageName = intent.getStringExtra("show_image_name"),
                     themeMode = themeMode,
                     onThemeToggle = {
                         themeMode = themeMode.next()
@@ -190,6 +193,8 @@ fun AdvertiserScreen(
     peerDiscovery: PeerDiscovery,
     peerConnector: PeerConnector,
     initialBlackout: Boolean = false,
+    initialImageUri: String? = null,
+    initialImageName: String? = null,
     themeMode: AppThemeMode,
     onThemeToggle: () -> Unit,
 ) {
@@ -219,6 +224,15 @@ fun AdvertiserScreen(
     // Screenshot sharing: open photo viewer when a new image arrives
     var openImage by remember { mutableStateOf<BonjourAdvertiser.ReceivedImage?>(null) }
     var lastShownImageId by rememberSaveable { mutableLongStateOf(0L) }
+    LaunchedEffect(initialImageUri) {
+        if (initialImageUri != null) {
+            openImage = BonjourAdvertiser.ReceivedImage(
+                uri = Uri.parse(initialImageUri),
+                name = initialImageName ?: "image",
+                eventId = -1L,
+            )
+        }
+    }
     LaunchedEffect(state.receivedImage?.eventId) {
         val image = state.receivedImage ?: return@LaunchedEffect
         if (image.eventId > lastShownImageId) {
@@ -233,6 +247,11 @@ fun AdvertiserScreen(
     }
 
     var isBlackoutMode by rememberSaveable { mutableStateOf(initialBlackout) }
+    var showExitWarning by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = state.gestureMode) {
+        showExitWarning = true
+    }
     var showBlackoutHint by remember { mutableStateOf(false) }
     var gestureWasOnBeforeBlackout by remember { mutableStateOf(false) }
     var blackoutCaptureProblem by remember { mutableStateOf<String?>(null) }
@@ -617,6 +636,23 @@ fun AdvertiserScreen(
             ReceivedPhotoViewer(
                 image = image,
                 onDismiss = { openImage = null },
+            )
+        }
+
+        if (showExitWarning) {
+            AlertDialog(
+                onDismissRequest = { showExitWarning = false },
+                title = { Text("Gesture sharing is on") },
+                text = { Text("Closing the app while Gesture Mode is on keeps the camera running in the background and may drain battery. Screen recording permission is required for screenshots.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showExitWarning = false
+                        GestureShareService.stop(context)
+                    }) { Text("Stop & exit") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExitWarning = false }) { Text("Keep running") }
+                },
             )
         }
     }
@@ -1514,7 +1550,8 @@ private fun GestureModeSection(
                                 "• To receive: GRAB on $targetName, then RELEASE here — the file arrives instantly!\n" +
                                     "• To send a file: GRAB here, then RELEASE on $targetName within 10s.\n" +
                                     "• To send a screenshot: GRAB here captures your screen, RELEASE on $targetName shares it.\n" +
-                                    "• Gestures keep working when Aavija is in the background.",
+                                    "• Gestures keep working when Aavija is in the background.\n" +
+                                    "• Warning: leaving Gesture Mode on uses the camera in the background and may drain battery. Screen recording permission is required for screenshots.",
                                 fontSize = 12.sp,
                                 color = colors.textSecondary,
                                 lineHeight = 17.sp,

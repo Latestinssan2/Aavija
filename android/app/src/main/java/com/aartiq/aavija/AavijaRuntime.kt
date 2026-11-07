@@ -47,13 +47,16 @@ class AavijaRuntime private constructor(context: Context) {
     private var networkStarted = false
 
     @Volatile
-    private var uiVisible = false
+    var uiVisible = false
 
     @Volatile
     private var serviceActive = false
 
     @Volatile
     private var gestureSessionActive = false
+
+    /** A received image waiting to be shown when the UI returns. */
+    val pendingReceivedImage = kotlinx.coroutines.flow.MutableStateFlow<BonjourAdvertiser.ReceivedImage?>(null)
 
     /**
      * The newest local gesture, so a screenshot captured on GRAB is not
