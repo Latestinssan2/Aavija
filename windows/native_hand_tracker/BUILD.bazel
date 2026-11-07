@@ -1,0 +1,9 @@
+cc_binary(
+    name = "mediapipe_windows_hand.dll",
+    srcs = ["src/hand_tracker.cpp", "src/hand_tracker.h"],
+    linkshared = 1,
+    deps = [
+        "//mediapipe/tasks/cc/vision/hand_landmarker:hand_landmarker",
+        "//mediapipe/tasks/cc/vision/core:image_frame",
+    ],
+)

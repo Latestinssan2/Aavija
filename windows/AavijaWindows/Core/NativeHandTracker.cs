@@ -5,22 +5,42 @@ namespace Aavija.Core;
 
 public class NativeHandTracker : IDisposable
 {
-    private IntPtr _handle = IntPtr.Zero;
+    private const string DllName = "mediapipe_windows_hand.dll";
 
-    [DllImport("AavijaHandTracker.dll", CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr CreateTracker(string modelPath);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LandmarkerResult
+    {
+        public int HandCount;
+        public int LandmarkCount;
+        public IntPtr X;
+        public IntPtr Y;
+        public IntPtr Z;
+    }
 
-    [DllImport("AavijaHandTracker.dll", CallingConvention = CallingConvention.Cdecl)]
-    private static extern int ProcessFrame(IntPtr handle, byte[] rgb, int width, int height, long nowMs);
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr CreateHandLandmarker(string modelPath);
 
-    [DllImport("AavijaHandTracker.dll", CallingConvention = CallingConvention.Cdecl)]
-    private static extern void DestroyTracker(IntPtr handle);
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern LandmarkerResult DetectHands(IntPtr landmarkerPtr, IntPtr imageData, int width, int height, int widthStep);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void FreeResult(LandmarkerResult result);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void DestroyHandLandmarker(IntPtr landmarkerPtr);
+
+    private IntPtr _landmarkerPtr;
 
     public bool IsAvailable
     {
         get
         {
-            try { var _unused = CreateTracker; return true; }
+            try
+            {
+                // Trigger DllNotFoundException if the DLL is absent.
+                var _ = CreateHandLandmarker;
+                return true;
+            }
             catch (DllNotFoundException) { return false; }
             catch (EntryPointNotFoundException) { return false; }
         }
@@ -30,25 +50,39 @@ public class NativeHandTracker : IDisposable
     {
         try
         {
-            _handle = CreateTracker(modelPath);
-            return _handle != IntPtr.Zero;
+            _landmarkerPtr = CreateHandLandmarker(modelPath);
+            return _landmarkerPtr != IntPtr.Zero;
         }
         catch { return false; }
     }
 
-    public int ProcessFrame(byte[] rgb, int width, int height, long nowMs)
+    public LandmarkerResult ProcessFrame(IntPtr rawPixelBuffer, int width, int height, int stride)
     {
-        if (_handle == IntPtr.Zero) return 0;
-        try { return ProcessFrame(_handle, rgb, width, height, nowMs); }
-        catch { return 0; }
+        if (_landmarkerPtr == IntPtr.Zero)
+            return new LandmarkerResult { HandCount = 0, LandmarkCount = 21 };
+
+        try
+        {
+            var result = DetectHands(_landmarkerPtr, rawPixelBuffer, width, height, stride);
+            return result;
+        }
+        catch
+        {
+            return new LandmarkerResult { HandCount = 0, LandmarkCount = 21 };
+        }
+    }
+
+    public void Free(LandmarkerResult result)
+    {
+        try { FreeResult(result); } catch { }
     }
 
     public void Dispose()
     {
-        if (_handle != IntPtr.Zero)
+        if (_landmarkerPtr != IntPtr.Zero)
         {
-            try { DestroyTracker(_handle); } catch { }
-            _handle = IntPtr.Zero;
+            try { DestroyHandLandmarker(_landmarkerPtr); } catch { }
+            _landmarkerPtr = IntPtr.Zero;
         }
     }
 }
