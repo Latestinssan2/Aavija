@@ -8,6 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Aavija</AssemblyName>
     <RootNamespace>Aavija</RootNamespace>
+    <Version>1.0.0</Version>
+    <ApplicationVersion>1.0.0.0</ApplicationVersion>
     <Platforms>x64</Platforms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
