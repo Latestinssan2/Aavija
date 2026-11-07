@@ -2,38 +2,96 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Aavija — Gesture AirDrop over Wi-Fi"
-        Height="760" Width="520"
-        WindowStartupLocation="CenterScreen">
-    <Grid Margin="20">
-        <StackPanel>
-            <TextBlock Text="Aavija (Windows native)" FontSize="24" FontWeight="Bold" />
-            <TextBlock Text="Pairing + file sharing + screenshots" Margin="0,4,0,16" Foreground="Gray" />
+        Height="780" Width="560"
+        WindowStartupLocation="CenterScreen"
+        Background="#0B1020">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#1E293B"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="Margin" Value="4"/>
+      <Setter Property="BorderBrush" Value="#334155"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Background" Value="#1E293B"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="BorderBrush" Value="#334155"/>
+      <Setter Property="Padding" Value="6"/>
+      <Setter Property="Margin" Value="0,0,0,8"/>
+    </Style>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#E2E8F0"/>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+      <Image Source="Assets/logo.png" Width="36" Height="36" Margin="0,0,10,0"/>
+      <StackPanel>
+        <TextBlock Text="Aavija" FontSize="22" FontWeight="Bold"/>
+        <TextBlock Text="Gesture AirDrop over Wi-Fi" FontSize="11" Foreground="#94A3B8"/>
+      </StackPanel>
+    </StackPanel>
 
-            <TextBlock Text="Phone host" />
-            <TextBox x:Name="HostBox" Text="192.168.1.10" Margin="0,0,0,8" />
-            <TextBlock Text="Port" />
-            <TextBox x:Name="PortBox" Text="0" Margin="0,0,0,8" />
-            <TextBlock Text="PIN (shown on this PC)" />
-            <TextBox x:Name="PinBox" Text="" Margin="0,0,0,8" />
-            <TextBlock Text="Request id (any)" />
-            <TextBox x:Name="RequestIdBox" Text="req1" Margin="0,0,0,12" />
-
-            <TextBlock Text="Listener PIN (for incoming pairing)" />
-            <TextBox x:Name="ListenerPinBox" Text="" Margin="0,0,0,8" />
-            <WrapPanel Margin="0,0,0,12">
-                <Button Content="Start listener" Click="StartListener_Click" Margin="0,0,8,8" />
-                <Button Content="Stop listener" Click="StopListener_Click" Margin="0,0,8,8" />
-            </WrapPanel>
-
-            <WrapPanel Margin="0,0,0,12">
-                <Button Content="Pair" Click="Pair_Click" Margin="0,0,8,8" />
-                <Button Content="Push file" Click="Push_Click" Margin="0,0,8,8" />
-                <Button Content="Pull file" Click="Pull_Click" Margin="0,0,8,8" />
-                <Button Content="Capture screen" Click="CaptureScreen_Click" Margin="0,0,8,8" />
-                <Button Content="Capture window" Click="CaptureActiveWindow_Click" Margin="0,0,8,8" />
-            </WrapPanel>
-
-            <TextBlock x:Name="StatusText" Text="Ready." TextWrapping="Wrap" />
+    <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0">
+      <TabItem Header="Pair">
+        <StackPanel Margin="8">
+          <TextBlock Text="Discovered phones" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <ComboBox x:Name="PhoneCombo" Margin="0,0,0,12"/>
+          <Button Content="Refresh discovery" Click="RefreshDiscovery_Click"/>
+          <TextBlock Text="Phone host (manual)" Margin="0,12,0,4"/>
+          <TextBox x:Name="HostBox" Text="192.168.1.10"/>
+          <TextBlock Text="Port" Margin="0,0,0,4"/>
+          <TextBox x:Name="PortBox" Text="0"/>
+          <TextBlock Text="PIN (shown on this PC)" Margin="0,0,0,4"/>
+          <TextBox x:Name="PinBox"/>
+          <TextBlock Text="Request id" Margin="0,0,0,4"/>
+          <TextBox x:Name="RequestIdBox" Text="req1"/>
+          <Button Content="Pair" Click="Pair_Click" Margin="0,8,0,0"/>
         </StackPanel>
-    </Grid>
+      </TabItem>
+      <TabItem Header="Files">
+        <StackPanel Margin="8">
+          <Button Content="Push file" Click="Push_Click"/>
+          <Button Content="Pull file" Click="Pull_Click"/>
+          <Button Content="Capture screen" Click="CaptureScreen_Click"/>
+          <Button Content="Capture active window" Click="CaptureActiveWindow_Click"/>
+          <TextBlock Text="Download folder:" Margin="0,12,0,4"/>
+          <TextBox x:Name="DownloadFolderBox" IsReadOnly="True"/>
+          <Button Content="Choose download folder" Click="ChooseDownloadFolder_Click"/>
+          <TextBlock Text="Screenshot folder:" Margin="0,12,0,4"/>
+          <TextBox x:Name="ScreenshotFolderBox" IsReadOnly="True"/>
+          <Button Content="Choose screenshot folder" Click="ChooseScreenshotFolder_Click"/>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Gesture">
+        <StackPanel Margin="8">
+          <Button Content="Start gesture mode" Click="StartGesture_Click"/>
+          <Button Content="Stop gesture mode" Click="StopGesture_Click"/>
+          <TextBlock Text="Gesture status" Margin="0,12,0,4" FontWeight="SemiBold"/>
+          <TextBlock x:Name="GestureStatusText" Text="Idle"/>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Listener">
+        <StackPanel Margin="8">
+          <TextBlock Text="Listener PIN (for incoming pairing)" Margin="0,0,0,4"/>
+          <TextBox x:Name="ListenerPinBox"/>
+          <Button Content="Start listener" Click="StartListener_Click"/>
+          <Button Content="Stop listener" Click="StopListener_Click"/>
+          <TextBlock x:Name="ListenerStatusText" Text="Stopped" Margin="0,8,0,0"/>
+        </StackPanel>
+      </TabItem>
+    </TabControl>
+
+    <Border Grid.Row="2" Background="#111827" CornerRadius="8" Padding="10" Margin="0,12,0,0">
+      <TextBlock x:Name="StatusText" Text="Ready." TextWrapping="Wrap"/>
+    </Border>
+  </Grid>
 </Window>

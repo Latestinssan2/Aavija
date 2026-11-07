@@ -4,10 +4,12 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Aavija</AssemblyName>
     <RootNamespace>Aavija</RootNamespace>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <Version>1.1.0</Version>
     <ApplicationVersion>1.1.0.0</ApplicationVersion>
     <Platforms>x64</Platforms>
