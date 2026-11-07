@@ -13,6 +13,9 @@
     .content p, .content li { color:#cbd5e1; }
     .content code { background:#1e293b; padding:2px 6px; border-radius:4px; font-size:.9em; }
     .content pre { background:#0f172a; padding:1rem; border-radius:8px; overflow-x:auto; }
+    details { background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:1rem; margin:1rem 0; }
+    summary { cursor:pointer; font-weight:600; color:#22d3ee; }
+    details[open] summary { margin-bottom:.75rem; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-200">
@@ -24,6 +27,7 @@
       <a href="#build">Build</a>
       <a href="#protocol">Protocol</a>
       <a href="#security">Security</a>
+      <a href="#limitations">Known Limitations</a>
       <a href="#releases">Releases</a>
       <a href="#contributing">Contributing</a>
       <a href="#privacy">Privacy</a>
@@ -35,6 +39,10 @@
       <section id="intro">
         <h2>Introduction</h2>
         <p>Aavija is a native hand-gesture file and screenshot sharing app between Android, macOS, and Windows over local Wi-Fi. No cloud, no tracking, no data leaves your network.</p>
+        <details>
+          <summary>What makes Aavija different?</summary>
+          <p>Most sharing apps require an account or cloud relay. Aavija pairs devices with a 6-digit PIN over TLS 1.3 on your local network. Files never leave your Wi-Fi. Gesture detection runs entirely on-device.</p>
+        </details>
       </section>
 
       <section id="getting-started">
@@ -42,10 +50,18 @@
         <ol class="list-decimal ml-6 space-y-2">
           <li>Install Aavija on two devices on the same Wi-Fi.</li>
           <li>On Android, open the app (it becomes discoverable).</li>
-          <li>On macOS/Windows, open Aavija and tap the phone to pair.</li>
+          <li>On macOS/Windows, open Aavija and select the phone.</li>
           <li>Enter the 6-digit PIN shown on the desktop into the phone.</li>
           <li>Turn on Gesture Mode. GRAB to hold, RELEASE to send within 10s.</li>
         </ol>
+        <details>
+          <summary>First-time pairing walkthrough</summary>
+          <p>When you tap a Mac/Windows device on Android, the desktop generates a 6-digit PIN and displays it. The phone shows a PIN entry dialog. Type the PIN and press Submit. Five wrong attempts lock pairing for 5 minutes. Once paired, a token is stored and the PIN is never needed again.</p>
+        </details>
+        <details>
+          <summary>Gesture Mode tips</summary>
+          <p>Hold your hand 30–60 cm from the camera. GRAB = close fist, RELEASE = open palm. The hand must be visible for ~0.5s to register. Gesture Mode uses the front camera at ~10 fps; nothing is recorded.</p>
+        </details>
       </section>
 
       <section id="build">
@@ -55,11 +71,15 @@ macOS:    cd mac && xcodegen generate --spec project.yml && xcodebuild ...
 Windows:  dotnet build windows/AavijaWindows/AavijaWindows.csproj
       <section id="protocol">
         <h2>Protocol</h2>
-        <p>Phones are TLS listeners. Desktops are clients. Messages are newline-delimited JSON over TLS. See <a href="https://github.com/Latestinssan2/Aavija/blob/main/docs/PROTOCOL.md" class="text-cyan-400">docs/PROTOCOL.md</a>.</p>
-        <h3>Pairing</h3>
-        <p>6-digit PIN bound to certificate fingerprint. 5 attempts + lockout. Tokens are 256-bit.</p>
-        <h3>Gestures</h3>
-        <p>GRAB = fist, RELEASE = open palm. Matched within 10s. One side grabs, the other releases.</p>
+        <p>Phones are TLS listeners. Desktops are clients. Messages are newline-delimited JSON over TLS.</p>
+        <details>
+          <summary>Handshake details</summary>
+          <p>Phone sends a challenge (random salt). Client replies with pair (PIN proof bound to cert fingerprint) or auth (token). Phone replies paired/authenticated/rejected/locked. All file bytes require a valid token.</p>
+        </details>
+        <details>
+          <summary>Gesture matching</summary>
+          <p>One side GRABs (holds a file/screenshot), the other RELEASEs within 10s. The connecting phone drives A2A transfers; the Mac/Windows drives Mac↔phone transfers.</p>
+        </details>
       </section>
 
       <section id="security">
@@ -70,7 +90,28 @@ Windows:  dotnet build windows/AavijaWindows/AavijaWindows.csproj
           <li>Path traversal rejected; writes only under Downloads/GestureShare.</li>
           <li>200 MB file cap.</li>
           <li>No silent plaintext fallback.</li>
+          <li>5 PIN attempts then 5-minute lockout.</li>
         </ul>
+        <details>
+          <summary>Threat model</summary>
+          <p>A man-in-the-middle swapping certificates produces a proof bound to a different fingerprint and is rejected. Replay attacks are prevented by per-connection salts. Unpaired devices never receive file bytes.</p>
+        </details>
+      </section>
+
+      <section id="limitations">
+        <h2>Known Limitations</h2>
+        <details>
+          <summary>Mac↔Mac direct sharing</summary>
+          <p>macOS cannot run the listener (Network.framework listener fails). Use a phone or Windows listener as a relay.</p>
+        </details>
+        <details>
+          <summary>Windows gesture tracking</summary>
+          <p>Uses a Python/MediaPipe sidecar. A native C++ MediaPipe DLL is scaffolded but requires a local MediaPipe build.</p>
+        </details>
+        <details>
+          <summary>Background camera on Android</summary>
+          <p>Requires a foreground service and camera permission. Android may still restrict background camera on some OEMs.</p>
+        </details>
       </section>
 
       <section id="releases">
@@ -85,7 +126,11 @@ Windows:  dotnet build windows/AavijaWindows/AavijaWindows.csproj
 
       <section id="contributing">
         <h2>Contributing</h2>
-        <p>See <a href="https://github.com/Latestinssan2/Aavija/blob/main/CONTRIBUTING.md" class="text-cyan-400">CONTRIBUTING.md</a>. Open a PR against <code>main</code>.</p>
+        <p>See <a href="https://github.com/Latestinssan2/Aavija/blob/main/CONTRIBUTING.md" class="text-cyan-400">CONTRIBUTING.md</a>. Open a PR against <code>main</code>. All PRs are reviewed before merge.</p>
+        <details>
+          <summary>How to submit a PR</summary>
+          <p>Fork the repo, create a feature branch, make changes, run builds/tests, update CHANGELOG.md, and open a PR. Use the PR template.</p>
+        </details>
       </section>
 
       <section id="privacy">
