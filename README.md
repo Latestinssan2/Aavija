@@ -18,6 +18,7 @@ https://github.com/user-attachments/assets/56cc402f-568d-458c-9624-f69b874099e6
 | **macOS** (Apple Silicon / Intel) | `.dmg` | [Download Aavija-macOS.dmg](https://github.com/Latestinssan2/Aavija/releases/download/v1.0.0/Aavija-macOS.dmg) | macOS 14.0 Sonoma or later |
 | **macOS** (Archive) | `.app.zip` | [Download Aavija-macOS.app.zip](https://github.com/Latestinssan2/Aavija/releases/download/v1.0.0/Aavija-macOS.app.zip) | macOS 14.0 Sonoma or later |
 | **Android** | `.apk` | [Download Aavija.apk](https://github.com/Latestinssan2/Aavija/releases/download/v1.0.0/Aavija.apk) | Android 10.0 (API 29) or later |
+| **Windows** | `.exe` / `.msix` | [Download Aavija-windows.msix](https://github.com/Latestinssan2/Aavija/releases/download/v1.0.0/Aavija-windows.msix) | Windows 10 1903 or later |
 
 ---
 
@@ -36,6 +37,9 @@ https://github.com/user-attachments/assets/56cc402f-568d-458c-9624-f69b874099e6
   - **Double-tap** to zoom/reset.
   - Swipe down to dismiss.
   - Floating actions: *"આવતું છે"*, *"Open in Photos"*, and *"Done"*.
+- **Windows Native Client (beta)**:
+  - Native WPF app with PIN pairing, file push/pull, and screenshot capture.
+  - Gesture detection via MediaPipe sidecar (native C++ MediaPipe DLL in progress).
 - **Magic Blackout Screen Mode**:
   - Completely blacks out the Android screen and hides status/navigation bars.
   - Background gesture camera stays actively tracking hands even while the screen remains pitch black.
