@@ -59,7 +59,7 @@ jobs:
 
   build-macos:
     name: Build macOS DMG
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -142,7 +142,9 @@ jobs:
             Copy-Item "windows/AavijaWindows/Assets/*" "$staging/Assets" -Recurse -Force
           }
           # Create an unsigned MSIX for distribution/testing.
-          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\makeappx.exe$' } |
+            Select-Object -First 1
           if (-not $makeappx) { throw "makeappx.exe not found" }
           $sdk = $makeappx.DirectoryName
           & $makeappx.FullName pack /d $staging /p artifacts/Aavija-windows.msix /nv
