@@ -59,6 +59,15 @@ public class GestureController
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
         Status = "Gesture sidecar started.";
+        // If a native tracker DLL is present, prefer it once a camera frame
+        // pipeline is wired up (see NativeHandTracker).
+        try
+        {
+            using var native = new NativeHandTracker();
+            if (native.IsAvailable)
+                Status = "Native hand tracker DLL detected (sidecar still used for camera).";
+        }
+        catch { }
     }
 
     public void Stop()
