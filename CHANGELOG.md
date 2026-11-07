@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - 2026-11-07
+## [1.1.0] - 2026-11-07
 
 ### Added
 - Android foreground service for background gesture scanning.
