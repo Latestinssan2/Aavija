@@ -90,11 +90,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Size
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -120,6 +126,58 @@ class MainActivity : ComponentActivity() {
     private lateinit var peerDiscovery: PeerDiscovery
     private lateinit var peerConnector: PeerConnector
 
+    data class DeepLinkAction(
+        val openGemini: Boolean = false,
+        val geminiQuery: String? = null,
+        val openGuide: Boolean = false,
+        val openSettings: Boolean = false,
+    )
+
+    private val deepLinkFlow = kotlinx.coroutines.flow.MutableStateFlow<DeepLinkAction?>(null)
+
+    private fun handleIntentData(intent: Intent?) {
+        val uri = intent?.data ?: return
+        val scheme = uri.scheme?.lowercase()
+        val host = uri.host?.lowercase()
+
+        if (scheme == "aavija" || (scheme == "https" && host == "aavija.app")) {
+            val targetHost = if (scheme == "aavija") host else uri.path?.removePrefix("/")?.lowercase()
+            val query = uri.getQueryParameter("q") ?: uri.getQueryParameter("query") ?: uri.getQueryParameter("prompt")
+            val device = uri.getQueryParameter("device") ?: uri.getQueryParameter("target")
+
+            when (targetHost) {
+                "gemini", "ai" -> {
+                    deepLinkFlow.value = DeepLinkAction(openGemini = true, geminiQuery = query)
+                }
+                "unpair" -> {
+                    runtime.unpairDevice(device)
+                    deepLinkFlow.value = DeepLinkAction(
+                        openGemini = true,
+                        geminiQuery = if (device != null) "Unpair $device" else "Unpair all devices"
+                    )
+                }
+                "guide" -> {
+                    deepLinkFlow.value = DeepLinkAction(openGuide = true)
+                }
+                "settings" -> {
+                    deepLinkFlow.value = DeepLinkAction(openSettings = true)
+                }
+                "devices", "radar" -> {
+                    deepLinkFlow.value = DeepLinkAction(
+                        openGemini = true,
+                        geminiQuery = "Which devices are connected?"
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntentData(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -134,6 +192,7 @@ class MainActivity : ComponentActivity() {
         peerDiscovery = runtime.peerDiscovery
         peerConnector = runtime.peerConnector
         requestLegacyStoragePermissionIfNeeded()
+        handleIntentData(intent)
 
         setContent {
             var themeMode by rememberSaveable { mutableStateOf(AppThemeMode.SYSTEM) }
@@ -149,12 +208,16 @@ class MainActivity : ComponentActivity() {
                         macDiscovery = macDiscovery,
                         peerDiscovery = peerDiscovery,
                         peerConnector = peerConnector,
+                        deepLinkFlow = deepLinkFlow,
                         initialBlackout = intent.getBooleanExtra("enter_blackout", false),
                         initialImageUri = intent.getStringExtra("show_image_uri"),
                         initialImageName = intent.getStringExtra("show_image_name"),
                         themeMode = themeMode,
                         onThemeToggle = {
                             themeMode = themeMode.next()
+                        },
+                        onThemeSelect = {
+                            themeMode = it
                         },
                     )
 
@@ -208,11 +271,13 @@ fun AdvertiserScreen(
     macDiscovery: MacDiscovery,
     peerDiscovery: PeerDiscovery,
     peerConnector: PeerConnector,
+    deepLinkFlow: kotlinx.coroutines.flow.StateFlow<MainActivity.DeepLinkAction?>,
     initialBlackout: Boolean = false,
     initialImageUri: String? = null,
     initialImageName: String? = null,
     themeMode: AppThemeMode,
     onThemeToggle: () -> Unit,
+    onThemeSelect: (AppThemeMode) -> Unit = {},
 ) {
     val state by advertiser.state.collectAsState()
     val pin by advertiser.typedPin.collectAsState()
@@ -222,6 +287,105 @@ fun AdvertiserScreen(
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val colors = LocalAavijaColors.current
+    val scope = rememberCoroutineScope()
+
+    var showGuide by rememberSaveable { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showGemini by rememberSaveable { mutableStateOf(false) }
+    var geminiQuery by remember { mutableStateOf<String?>(null) }
+
+    val geminiAssistant = remember {
+        GeminiAssistant(context = context, runtime = runtime, scope = scope)
+    }
+
+    val deepLink by deepLinkFlow.collectAsState()
+    LaunchedEffect(deepLink) {
+        val action = deepLink ?: return@LaunchedEffect
+        if (action.openGemini) {
+            showGemini = true
+            geminiQuery = action.geminiQuery
+        }
+        if (action.openGuide) {
+            showGuide = true
+        }
+        if (action.openSettings) {
+            showSettings = true
+        }
+    }
+
+    // Unified list of all nearby devices (macOS, Windows, Android)
+    val unifiedDevices = remember(macs, peers, state, peerState) {
+        val list = mutableListOf<UnifiedPeer>()
+
+        macs.forEach { mac ->
+            val isWindows = mac.isWindows || mac.name.contains("Windows", ignoreCase = true) || mac.name.contains("PC", ignoreCase = true)
+            val isPaired = state.isPaired && state.pairedMacName == mac.name
+            val isActive = !state.phoneTargetActive && state.selectedMac == mac.name
+            list.add(
+                UnifiedPeer(
+                    id = mac.id,
+                    name = mac.name,
+                    platform = if (isWindows) TargetPlatform.WINDOWS else TargetPlatform.MAC,
+                    isPaired = isPaired,
+                    isActiveTarget = isActive,
+                    onSelect = {
+                        advertiser.setMacTargetActive(true)
+                        peerConnector.pauseTarget()
+                        advertiser.selectMac(mac.name)
+                    },
+                    onUnpair = if (isPaired || isActive) {
+                        { runtime.unpairDevice(mac.name) }
+                    } else null,
+                )
+            )
+        }
+
+        // If a paired Mac / Windows PC exists but is currently offline/not in mDNS list, show it so user can unpair
+        if (state.isPaired && state.pairedMacName != null && macs.none { it.name == state.pairedMacName }) {
+            val name = state.pairedMacName!!
+            val isWindows = name.contains("Windows", ignoreCase = true) || name.contains("PC", ignoreCase = true)
+            list.add(
+                UnifiedPeer(
+                    id = "paired-$name",
+                    name = name,
+                    platform = if (isWindows) TargetPlatform.WINDOWS else TargetPlatform.MAC,
+                    isPaired = true,
+                    isActiveTarget = false,
+                    isReachable = false,
+                    onSelect = { advertiser.selectMac(name) },
+                    onUnpair = { runtime.unpairDevice(name) },
+                )
+            )
+        }
+
+        peers.forEach { peer ->
+            val isPaired = peerState.pairedPeerIds.contains(peer.id) || (state.pairedPhoneName == peer.name)
+            val isActive = state.phoneTargetActive && (peerState.activePeerId == peer.id || state.pairedPhoneName == peer.name)
+            list.add(
+                UnifiedPeer(
+                    id = peer.id,
+                    name = peer.name,
+                    platform = TargetPlatform.ANDROID,
+                    isPaired = isPaired,
+                    isActiveTarget = isActive,
+                    onSelect = {
+                        advertiser.setMacTargetActive(false)
+                        val alreadyOurs = peerConnector.isPairedWith(peer.id)
+                        if (!alreadyOurs && advertiser.resumePhoneTarget(peer.name)) {
+                            peerConnector.pauseTarget()
+                        } else {
+                            peerConnector.pairWith(peer)
+                        }
+                    },
+                    onUnpair = if (isPaired || isActive) {
+                        { runtime.unpairDevice(peer.id) }
+                    } else null,
+                )
+            )
+        }
+
+        list
+    }
 
     // The device a queued file is headed for. The phone peer is the most
     // recently activated target; tapping a Mac switches the queue back.
@@ -450,10 +614,9 @@ fun AdvertiserScreen(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Top Bar with Logo and Theme Switch
+            // Ultra-clean Top Bar: Borderless Wide Logo + Borderless Settings Icon
             HeaderBar(
-                themeMode = themeMode,
-                onThemeToggle = onThemeToggle,
+                onOpenSettings = { showSettings = true },
             )
 
             Spacer(Modifier.height(24.dp))
@@ -518,49 +681,10 @@ fun AdvertiserScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // Available Macs Section
-            AvailableMacsCard(
-                macs = macs,
-                selectedMac = selectedMac,
-                isPaired = state.isPaired,
-                pairedMacName = state.pairedMacName,
-                onSelectMac = {
-                    // Picking a Mac makes it the send target; a file must not be
-                    // pushed/pulled by a paired phone behind the user's back.
-                    advertiser.setMacTargetActive(true)
-                    peerConnector.pauseTarget()
-                    advertiser.selectMac(it)
-                },
-            )
-
-            Spacer(Modifier.height(14.dp))
-
-            // Other phones running Aavija.
-            AvailablePhonesCard(
-                peers = peers,
-                pairedIds = peerState.pairedPeerIds,
-                activePeerId = peerState.activePeerId,
-                pairedPeerName = peerState.pairedPeerName,
-                trustedPhoneName = state.pairedPhoneName,
-                phoneTargetActive = state.phoneTargetActive,
-                isPaired = peerState.isPaired,
-                isReachable = peerState.isReachable,
-                targetActive = peerState.targetActive,
-                onSelect = { peer ->
-                    // A phone tap switches the single queue back to phone mode.
-                    advertiser.setMacTargetActive(false)
-                    // If this phone is the one that paired with US, it already
-                    // has a token here and dials us; do not start a redundant
-                    // reverse pairing. Just give it the queue back.
-                    val alreadyOurs = peerConnector.isPairedWith(peer.id)
-                    if (!alreadyOurs && advertiser.resumePhoneTarget(peer.name)) {
-                        // Listener-side peer: let it pull, and stop pushing the
-                        // queue to any outbound peer we were driving.
-                        peerConnector.pauseTarget()
-                    } else {
-                        peerConnector.pairWith(peer)
-                    }
-                },
+            // Single Unified Nearby Devices Radar (macOS, Windows, Android)
+            UnifiedDevicesCard(
+                devices = unifiedDevices,
+                isAdvertising = state.isAdvertising,
             )
 
             // Client-side pairing status ("Waiting for Pixel…", "Wrong PIN").
@@ -593,7 +717,17 @@ fun AdvertiserScreen(
                 )
             }
 
-            // Quick Action: Send File to Mac (when paired)
+            // Dedicated Staged File State
+            var stagedFile by remember { mutableStateOf<StagedFileInfo?>(null) }
+
+            // Sync with advertiser's queue state (clears when delivered or cancelled)
+            LaunchedEffect(state.stagedFileName) {
+                if (state.stagedFileName == null && advertiser.peekOutgoing() == null) {
+                    stagedFile = null
+                }
+            }
+
+            // Quick Action: Send File / Mid-Air Gesture Staging
             val scope = rememberCoroutineScope()
             val pickLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenDocument()
@@ -608,9 +742,18 @@ fun AdvertiserScreen(
                 scope.launch {
                     val meta = withContext(Dispatchers.IO) { readNameSizeAndHash(context, uri) }
                     if (meta != null) {
+                        val mime = context.contentResolver.getType(uri)
+                        val thumb = withContext(Dispatchers.IO) { loadThumbnail(context, uri) }
+                        stagedFile = StagedFileInfo(
+                            uri = uri,
+                            name = meta.first,
+                            size = meta.second,
+                            sha256Hex = meta.third,
+                            mimeType = mime,
+                            thumbnail = thumb,
+                        )
                         advertiser.queueOutgoingFile(uri, meta.first, meta.second, meta.third)
-                        // If a phone is the active target, send it right away
-                        // (unless Gesture mode is waiting for a grab/release).
+                        // If a phone is the active target and not in gesture mode, send right away
                         peerConnector.onFileQueued()
                     } else {
                         advertiser.reportOutgoingProblem("Couldn't read that file.")
@@ -618,10 +761,25 @@ fun AdvertiserScreen(
                 }
             }
 
-            if (targetName != null) {
-                Spacer(Modifier.height(20.dp))
-                SendFileCard(
-                    label = "Send file to $targetName…",
+            Spacer(Modifier.height(20.dp))
+
+            val currentStaged = stagedFile
+            if (currentStaged != null) {
+                StagedFilePreviewCard(
+                    file = currentStaged,
+                    isGrabbedInHand = state.isStagedFileGrabbed,
+                    targetName = targetName,
+                    onDirectRelease = { runtime.triggerDirectRelease() },
+                    onToggleGrab = { advertiser.markFileGrabbed(!state.isStagedFileGrabbed) },
+                    onChangeFile = { pickLauncher.launch(arrayOf("*/*")) },
+                    onDiscard = {
+                        stagedFile = null
+                        advertiser.discardOutgoingFile()
+                    },
+                )
+            } else {
+                SelectFileToShareCard(
+                    targetName = targetName,
                     onPickFile = { pickLauncher.launch(arrayOf("*/*")) },
                 )
             }
@@ -652,6 +810,46 @@ fun AdvertiserScreen(
             ReceivedPhotoViewer(
                 image = image,
                 onDismiss = { openImage = null },
+            )
+        }
+
+        if (showGuide) {
+            StartupGuideSheet(
+                onDismiss = { showGuide = false }
+            )
+        }
+
+        if (showSettings) {
+            SettingsSheet(
+                themeMode = themeMode,
+                onThemeSelect = onThemeSelect,
+                onOpenGuide = { showGuide = true },
+                onEnterBlackout = {
+                    gestureWasOnBeforeBlackout = state.gestureMode
+                    showBlackoutHint = true
+                    isBlackoutMode = true
+                },
+                onResetPairing = {
+                    runtime.unpairDevice(null)
+                },
+                pairedMacName = state.pairedMacName,
+                pairedPhoneName = state.pairedPhoneName,
+                onUnpairDevice = { deviceName ->
+                    runtime.unpairDevice(deviceName)
+                },
+                onOpenGemini = {
+                    showGemini = true
+                    geminiQuery = null
+                },
+                onDismiss = { showSettings = false }
+            )
+        }
+
+        if (showGemini) {
+            GeminiSheet(
+                assistant = geminiAssistant,
+                onDismiss = { showGemini = false },
+                initialQuery = geminiQuery,
             )
         }
 
@@ -703,92 +901,43 @@ private fun rememberScreenCaptureRequester(
 
 @Composable
 private fun HeaderBar(
-    themeMode: AppThemeMode,
-    onThemeToggle: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val colors = LocalAavijaColors.current
+    val isDark = colors.isDark
+    val wideLogoDrawable = if (isDark) R.drawable.logo_wide_header_bright else R.drawable.logo_wide_header
 
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val isDark = colors.isDark
-            val logoBg = if (isDark) Color.Black else Color.White
-            val logoBorder = if (isDark) Color.White.copy(alpha = 0.22f) else Color(0xFF00E5FF).copy(alpha = 0.35f)
-            val logoDrawable = if (isDark) R.drawable.app_logo_bright else R.drawable.app_logo
+        // Wide Logo with zero borders, zero boxes, zero outlines
+        Image(
+            painter = painterResource(id = wideLogoDrawable),
+            contentDescription = "Aavija",
+            modifier = Modifier.height(34.dp),
+            contentScale = ContentScale.Fit,
+        )
 
-            // Brand Logo ("આવી જા")
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = logoBg,
-                border = BorderStroke(1.dp, logoBorder),
-                shadowElevation = if (isDark) 0.dp else 3.dp,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(3.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Image(
-                        painter = painterResource(id = logoDrawable),
-                        contentDescription = "Aavija Logo",
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Column {
-                Text(
-                    "Aavija",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary,
-                    letterSpacing = 0.5.sp,
-                )
-                Text(
-                    "Gesture AirDrop over Wi-Fi",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.textSecondary,
-                )
-            }
-        }
-
-        // Theme Toggle Pill Button
-        Surface(
-            color = colors.surfaceElevated,
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, colors.surfaceBorder),
+        // Settings Button: completely borderless, official settings icon
+        Box(
             modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onThemeToggle,
-                )
-                .shadow(4.dp, RoundedCornerShape(16.dp)),
+                    onClick = onOpenSettings,
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = if (colors.isDark) "🌙" else "☀️",
-                    fontSize = 15.sp,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = if (colors.isDark) "Dark" else "Light",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.textPrimary,
-                )
-            }
+            Image(
+                painter = painterResource(id = R.drawable.ic_header_settings),
+                contentDescription = "Settings",
+                colorFilter = ColorFilter.tint(colors.textSecondary),
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }
@@ -1315,12 +1464,307 @@ private fun TransferStatusPill(status: String, isReceiving: Boolean, failed: Boo
     }
 }
 
+data class StagedFileInfo(
+    val uri: Uri,
+    val name: String,
+    val size: Long,
+    val sha256Hex: String,
+    val mimeType: String?,
+    val thumbnail: Bitmap? = null,
+)
+
 @Composable
-private fun SendFileCard(label: String, onPickFile: () -> Unit) {
+private fun StagedFilePreviewCard(
+    file: StagedFileInfo,
+    isGrabbedInHand: Boolean,
+    targetName: String?,
+    onDirectRelease: () -> Unit,
+    onToggleGrab: () -> Unit,
+    onChangeFile: () -> Unit,
+    onDiscard: () -> Unit,
+) {
     val colors = LocalAavijaColors.current
 
     Surface(
-        color = colors.primary.copy(alpha = 0.12f),
+        color = colors.surface,
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(
+            1.5.dp,
+            if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.6f) else colors.primary.copy(alpha = 0.45f),
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(
+                12.dp,
+                RoundedCornerShape(22.dp),
+                spotColor = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.35f) else colors.primary.copy(alpha = 0.25f),
+            ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+        ) {
+            // Header: Status badge + Discard button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.18f) else colors.primary.copy(alpha = 0.16f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.4f) else colors.primary.copy(alpha = 0.35f),
+                    ),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(if (isGrabbedInHand) Color(0xFFF59E0B) else colors.primary),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (isGrabbedInHand) "HELD IN HAND ✊" else "READY TO BEAM ⚡",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.primary,
+                            letterSpacing = 0.5.sp,
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = colors.textSecondary.copy(alpha = 0.12f),
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clickable { onDiscard() },
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "✕",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.textSecondary,
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // Visual Preview (Image or File Icon Box)
+            if (file.thumbnail != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black.copy(alpha = 0.4f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        bitmap = file.thumbnail.asImageBitmap(),
+                        contentDescription = file.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // Bottom gradient vignette with file metadata
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
+                                    startY = 60f,
+                                ),
+                            ),
+                    )
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = file.name,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "• ${formatFileSize(file.size)}",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = colors.textSecondary.copy(alpha = 0.08f),
+                    border = BorderStroke(1.dp, colors.textSecondary.copy(alpha = 0.15f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = colors.primary.copy(alpha = 0.15f),
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = getFileIcon(file.name, file.mimeType),
+                                    fontSize = 22.sp,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = file.name,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "${formatFileSize(file.size)} • ${file.mimeType ?: "File"}",
+                                fontSize = 12.sp,
+                                color = colors.textSecondary,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Guidance banner
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.12f) else colors.primary.copy(alpha = 0.08f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (isGrabbedInHand) "✊" else "🖐",
+                        fontSize = 15.sp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (isGrabbedInHand) {
+                            "Locked in hand! Aim at ${targetName ?: "device"} & open hand 🖐 (RELEASE) to beam."
+                        } else {
+                            "Direct Release 🖐 to beam instantly, or GRAB ✊ to hold in hand."
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.textPrimary,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // Action Buttons Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Primary action: Direct Release 🖐
+                Button(
+                    onClick = onDirectRelease,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.primary,
+                        contentColor = Color.Black,
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                ) {
+                    Text(
+                        text = "Direct Release 🖐",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                // Secondary toggle: Hold in Hand ✊
+                Button(
+                    onClick = onToggleGrab,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.2f) else colors.textSecondary.copy(alpha = 0.14f),
+                        contentColor = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.textPrimary,
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.5f) else colors.textSecondary.copy(alpha = 0.2f),
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.height(44.dp),
+                ) {
+                    Text(
+                        text = if (isGrabbedInHand) "Put Down" else "Hold ✊",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+
+                // Change file button
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = colors.textSecondary.copy(alpha = 0.12f),
+                    modifier = Modifier
+                        .height(44.dp)
+                        .clickable { onChangeFile() },
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Change",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textSecondary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectFileToShareCard(
+    targetName: String?,
+    onPickFile: () -> Unit,
+) {
+    val colors = LocalAavijaColors.current
+
+    Surface(
+        color = colors.surface,
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f)),
         modifier = Modifier
@@ -1330,21 +1774,49 @@ private fun SendFileCard(label: String, onPickFile: () -> Unit) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = "📁",
-                fontSize = 20.sp,
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = label,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = colors.primary,
-            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = colors.primary.copy(alpha = 0.15f),
+                modifier = Modifier.size(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(text = "📁", fontSize = 22.sp)
+                }
+            }
+
+            Spacer(Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (targetName != null) "Select File to Beam to $targetName…" else "Select File or Photo to Beam…",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "Share with Direct Release 🖐 or Grab ✊ without screenshot",
+                    fontSize = 11.sp,
+                    color = colors.textSecondary,
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = colors.primary.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.3f)),
+            ) {
+                Text(
+                    text = "Pick",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.primary,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }
@@ -2011,4 +2483,59 @@ private fun readNameSizeAndHash(context: Context, uri: Uri): Triple<String, Long
         return null
     }
     return Triple(name, size, sha)
+}
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format(java.util.Locale.US, "%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format(java.util.Locale.US, "%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format(java.util.Locale.US, "%.2f GB", gb)
+}
+
+private fun getFileIcon(name: String, mimeType: String?): String {
+    val lower = name.lowercase()
+    val mime = mimeType?.lowercase().orEmpty()
+    return when {
+        mime.startsWith("image/") || lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp") -> "🖼️"
+        mime.startsWith("video/") || lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".mkv") -> "🎬"
+        mime.startsWith("audio/") || lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".m4a") -> "🎵"
+        mime.contains("pdf") || lower.endsWith(".pdf") -> "📄"
+        mime.contains("zip") || mime.contains("tar") || lower.endsWith(".zip") || lower.endsWith(".gz") -> "📦"
+        mime.contains("text") || lower.endsWith(".txt") || lower.endsWith(".md") -> "📝"
+        else -> "📁"
+    }
+}
+
+private fun loadThumbnail(context: Context, uri: Uri): Bitmap? {
+    return runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            context.contentResolver.loadThumbnail(uri, Size(360, 360), null)
+        } else {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+            }
+            val sampleSize = calculateInSampleSize(bounds, 360, 360)
+            val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
+            }
+        }
+    }.getOrNull()
+}
+
+private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int, reqHeight: Int): Int {
+    val (height: Int, width: Int) = options.outHeight to options.outWidth
+    var inSampleSize = 1
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight: Int = height / 2
+        val halfWidth: Int = width / 2
+        while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+            inSampleSize *= 2
+        }
+    }
+    return inSampleSize
 }

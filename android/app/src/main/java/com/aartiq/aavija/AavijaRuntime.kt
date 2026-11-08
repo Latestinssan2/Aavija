@@ -186,6 +186,30 @@ class AavijaRuntime private constructor(context: Context) {
         // The local matcher must see the gesture immediately.
         peerConnector.onLocalGesture(type)
 
+        // When a user-selected file is staged in the queue:
+        //  - GRAB (✊) locks it in hand (without capturing a screenshot)
+        //  - RELEASE (🖐) performs DIRECT RELEASE beam to target
+        val staged = advertiser.peekOutgoing()
+        val isStagedNonScreenshot = staged != null && !staged.isScreenshot
+
+        if (isStagedNonScreenshot) {
+            when (type) {
+                HandGestureMachine.EventType.GRAB -> {
+                    advertiser.markFileGrabbed(true)
+                    AavijaSounds.screenshot() // Audio feedback on grab
+                    advertiser.onGesture(HandGestureMachine.EventType.GRAB)
+                    advertiser.reportStatus("✊ ${staged.name} held in hand — Aim at device & RELEASE 🖐 to beam!")
+                    return
+                }
+                HandGestureMachine.EventType.RELEASE -> {
+                    advertiser.markFileGrabbed(false)
+                    advertiser.onGesture(HandGestureMachine.EventType.RELEASE)
+                    triggerDirectReleaseTransfer(staged)
+                    return
+                }
+            }
+        }
+
         if (type == HandGestureMachine.EventType.GRAB && shouldCaptureScreenshot()) {
             advertiser.reportStatus("Capturing screenshot…")
             val started = screenCapture.capture { screenshot, error ->
@@ -250,5 +274,88 @@ class AavijaRuntime private constructor(context: Context) {
         val ad = advertiser.state.value
         val peer = peerConnector.state.value
         return ad.isPaired || ad.phoneTargetActive || (peer.isPaired && peer.targetActive)
+    }
+
+    /**
+     * Unpairs a specific device or all devices if nameOrId is null.
+     */
+    fun unpairDevice(nameOrId: String? = null) {
+        advertiser.unpairDevice(nameOrId)
+        if (nameOrId == null) {
+            peerConnector.unpairAllPeers()
+        } else {
+            val matching = peerConnector.getPairedPeers().find {
+                it.id == nameOrId || it.name.equals(nameOrId, ignoreCase = true) || nameOrId.contains(it.name, ignoreCase = true)
+            }
+            if (matching != null) {
+                peerConnector.unpairPeer(matching.id)
+            }
+        }
+    }
+
+    /**
+     * Triggered by mid-air RELEASE (🖐) gesture or on-screen Direct Release button.
+     */
+    fun triggerDirectRelease() {
+        val staged = advertiser.peekOutgoing() ?: return
+        triggerDirectReleaseTransfer(staged)
+    }
+
+    private fun triggerDirectReleaseTransfer(file: OutgoingFile) {
+        val adState = advertiser.state.value
+        val peerState = peerConnector.state.value
+
+        if (peerState.targetActive || adState.phoneTargetActive) {
+            advertiser.reportPeerTransfer(
+                "Direct Release 🖐: Sending ${file.name}…",
+                isSending = true,
+            )
+            peerConnector.triggerDirectPush()
+        } else if (adState.isPaired || adState.selectedMac != null) {
+            advertiser.triggerDirectRelease()
+        } else {
+            val pairedPeers = peerConnector.getPairedPeers()
+            if (pairedPeers.isNotEmpty()) {
+                peerConnector.resumeTarget()
+                advertiser.reportPeerTransfer(
+                    "Direct Release 🖐: Sending ${file.name} to ${pairedPeers.first().name}…",
+                    isSending = true,
+                )
+                peerConnector.triggerDirectPush()
+            } else {
+                advertiser.triggerDirectRelease()
+                advertiser.reportStatus("🖐 Direct Release armed: Tap or aim at a device to beam ${file.name}!")
+            }
+        }
+    }
+
+    /**
+     * Snapshot of the entire live runtime for Gemini AI assistant and diagnostics.
+     */
+    fun getDeviceSnapshot(): DeviceSnapshot {
+        val adState = advertiser.state.value
+        val peerState = peerConnector.state.value
+        val macList = macDiscovery.macs.value
+        val phoneList = peerDiscovery.peers.value
+        val pairedPeers = peerConnector.getPairedPeers()
+        val isCam = gestureCamera.isRunning
+        val isHoldingItem = advertiser.outgoingCount() > 0
+
+        return DeviceSnapshot(
+            isAdvertising = adState.isAdvertising,
+            localPort = adState.port,
+            isPaired = adState.isPaired || peerState.isPaired,
+            pairedMacName = adState.pairedMacName,
+            pairedPhoneName = adState.pairedPhoneName ?: peerState.pairedPeerName,
+            selectedMac = adState.selectedMac,
+            phoneTargetActive = adState.phoneTargetActive,
+            discoveredMacs = macList,
+            discoveredPhones = phoneList,
+            pairedPeers = pairedPeers,
+            isCameraRunning = isCam,
+            cameraFps = if (isCam) 30 else 0,
+            activeMode = if (isHoldingItem) "Send Mode (Holding file/screenshot to throw)" else "Receive Mode (Listening for gestures)",
+            lastPairingStatus = adState.lastPairing ?: peerState.pairingStatus,
+        )
     }
 }

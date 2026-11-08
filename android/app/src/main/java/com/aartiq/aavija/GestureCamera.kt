@@ -1,11 +1,13 @@
 package com.aartiq.aavija
 
 import android.content.Context
+import android.graphics.SurfaceTexture
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -82,11 +84,33 @@ class GestureCameraController(private val context: Context) : LifecycleOwner {
     private var lastAnalysisAt = 0L
     private var lastHandAt = 0L
 
+    private var dummySurfaceTexture: SurfaceTexture? = null
+    private var dummySurface: Surface? = null
+
+    /**
+     * Offscreen dummy surface provider that keeps the CameraX capture session
+     * continuously alive in the background when the activity is minimized,
+     * preventing Android OS from revoking background camera access.
+     */
+    private val dummySurfaceProvider = Preview.SurfaceProvider { request ->
+        val texture = SurfaceTexture(0).also { dummySurfaceTexture = it }
+        texture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+        val surface = Surface(texture).also { dummySurface = it }
+        request.provideSurface(surface, ContextCompat.getMainExecutor(context)) {
+            surface.release()
+            texture.release()
+            if (dummySurface == surface) dummySurface = null
+            if (dummySurfaceTexture == texture) dummySurfaceTexture = null
+        }
+    }
+
     /** Increments on every start/release so old camera callbacks are ignored. */
     private var generation = 0
 
     @Volatile
     private var running = false
+
+    val isRunning: Boolean get() = running
 
     /** Start the camera + landmarker. Idempotent. */
     @Synchronized
@@ -112,15 +136,27 @@ class GestureCameraController(private val context: Context) : LifecycleOwner {
     @Synchronized
     fun attachPreview(previewView: PreviewView) {
         previewSurface = previewView.surfaceProvider
-        previewUseCase?.setSurfaceProvider(previewSurface)
+        try {
+            previewUseCase?.setSurfaceProvider(ContextCompat.getMainExecutor(context), previewSurface)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set surface provider on attach", e)
+        }
         if (!running) start()
     }
 
-    /** The UI left; keep analysing, stop rendering. */
+    /**
+     * The UI minimized or left; switch to the offscreen dummy surface so
+     * CameraX keeps the session continuously active in the background
+     * without tearing down the Camera2 device.
+     */
     @Synchronized
     fun detachPreview() {
         previewSurface = null
-        previewUseCase?.setSurfaceProvider(null)
+        try {
+            previewUseCase?.setSurfaceProvider(ContextCompat.getMainExecutor(context), dummySurfaceProvider)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not set offscreen dummy surface on detach", e)
+        }
     }
 
     /** Stop the camera and release MediaPipe. Safe to call repeatedly. */
@@ -195,7 +231,8 @@ class GestureCameraController(private val context: Context) : LifecycleOwner {
                 cameraProvider = provider
 
                 val preview = Preview.Builder().build().also { useCase ->
-                    previewSurface?.let { useCase.setSurfaceProvider(it) }
+                    val surfaceProvider = previewSurface ?: dummySurfaceProvider
+                    useCase.setSurfaceProvider(ContextCompat.getMainExecutor(context), surfaceProvider)
                 }
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)

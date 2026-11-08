@@ -129,6 +129,10 @@ class BonjourAdvertiser(private val context: Context) {
         val gestureMode: Boolean = false,
         /** Phase 7: the last gesture this phone detected ("GRAB ✊" / "RELEASE 🖐"). */
         val lastGesture: String? = null,
+        /** True when a user-selected file is held in hand (grabbed) before releasing. */
+        val isStagedFileGrabbed: Boolean = false,
+        /** Name of user-selected file waiting in outgoing queue. */
+        val stagedFileName: String? = null,
         /**
          * Screenshot sharing: the most recently received image, ready to open.
          *
@@ -226,6 +230,63 @@ class BonjourAdvertiser(private val context: Context) {
     /** Called when the user presses Submit. Arms exactly one verification. */
     fun submitPin() {
         pinSubmitted = true
+    }
+
+    fun resetPairing() {
+        _typedPin.value = ""
+        pinSubmitted = false
+        val prefs = context.applicationContext.getSharedPreferences("aavija_pairing", Context.MODE_PRIVATE)
+        prefs.edit().clear().apply()
+        _state.value = _state.value.copy(
+            isPaired = false,
+            pairedMacName = null,
+            pairedPhoneName = null,
+            lastPairing = null,
+            selectedMac = null,
+            pairingRequestActive = false,
+        )
+    }
+
+    /**
+     * Unpairs a specific device (Mac, Windows PC, or Phone) or clears all if name is null.
+     */
+    fun unpairDevice(name: String? = null) {
+        val currentMac = _state.value.pairedMacName
+        val currentPhone = _state.value.pairedPhoneName
+
+        val isMacMatch = name == null || currentMac == null ||
+            name.equals(currentMac, ignoreCase = true) ||
+            name.contains(currentMac, ignoreCase = true) ||
+            currentMac.contains(name, ignoreCase = true) ||
+            name.contains("mac", ignoreCase = true) ||
+            name.contains("windows", ignoreCase = true) ||
+            name.contains("pc", ignoreCase = true)
+
+        if (isMacMatch) {
+            val prefs = context.applicationContext.getSharedPreferences("aavija_pairing", Context.MODE_PRIVATE)
+            prefs.edit().clear().apply()
+            _state.value = _state.value.copy(
+                isPaired = false,
+                pairedMacName = null,
+                selectedMac = null,
+                lastPairing = null,
+                pairingRequestActive = false,
+            )
+        }
+
+        val isPhoneMatch = name == null || currentPhone == null ||
+            name.equals(currentPhone, ignoreCase = true) ||
+            name.contains(currentPhone, ignoreCase = true) ||
+            currentPhone.contains(name, ignoreCase = true) ||
+            name.contains("phone", ignoreCase = true) ||
+            name.contains("android", ignoreCase = true)
+
+        if (isPhoneMatch) {
+            _state.value = _state.value.copy(
+                pairedPhoneName = null,
+                phoneTargetActive = false,
+            )
+        }
     }
 
     /**
@@ -375,6 +436,8 @@ class BonjourAdvertiser(private val context: Context) {
     private var receivedImageEventId = 0L
     @Volatile
     private var gestureModeOn = false
+    @Volatile
+    private var directReleaseActiveUntil = 0L
 
     /** Called by MainActivity when Gesture mode is toggled. */
     fun setGestureMode(enabled: Boolean) {
@@ -408,12 +471,46 @@ class BonjourAdvertiser(private val context: Context) {
         outgoingQueue.enqueue(OutgoingFile(uri, name, size, sha256Hex))
         _state.value = _state.value.copy(
             transferFailed = false,
+            isStagedFileGrabbed = false,
+            stagedFileName = name,
             transferStatus = if (gestureModeOn) {
-                "Ready to send $name — do GRAB/RELEASE to trigger"
+                "Ready to beam $name — Aim & RELEASE 🖐 or GRAB ✊"
             } else {
-                "Ready to send $name — waiting for the other device"
+                "Ready to beam $name — tap Direct Release 🖐 or choose device"
             },
         )
+    }
+
+    /** User gripped the staged file in hand (GRAB ✊ gesture) without screenshot capture. */
+    fun markFileGrabbed(grabbed: Boolean) {
+        _state.value = _state.value.copy(isStagedFileGrabbed = grabbed)
+    }
+
+    /** Clear any staged outgoing file. */
+    fun discardOutgoingFile() {
+        if (_state.value.isSending) return
+        outgoingQueue.clear()
+        _state.value = _state.value.copy(
+            transferStatus = null,
+            transferFailed = false,
+            isStagedFileGrabbed = false,
+            stagedFileName = null,
+        )
+    }
+
+    /** Trigger immediate mid-air Direct Release (🖐) transmission. */
+    fun triggerDirectRelease() {
+        val file = outgoingQueue.peek() ?: return
+        directReleaseActiveUntil = System.currentTimeMillis() + 10_000L
+        gestureReporter.record(HandGestureMachine.EventType.GRAB)
+        gestureReporter.record(HandGestureMachine.EventType.RELEASE)
+        _state.value = _state.value.copy(
+            lastGesture = "RELEASE 🖐",
+            transferFailed = false,
+            isStagedFileGrabbed = false,
+            transferStatus = "Direct Release 🖐: Beaming ${file.name}…",
+        )
+        AavijaSounds.transferStart()
     }
 
     /**
@@ -673,8 +770,10 @@ class BonjourAdvertiser(private val context: Context) {
             }
         }
         // Phase 7: while Gesture mode is ON, the Mac must NOT pull a queued file
-        // just because it exists. It waits for a grab/release handshake.
-        protocol.setGestureGateProvider { gestureModeOn }
+        // just because it exists, unless Direct Release was just triggered.
+        protocol.setGestureGateProvider {
+            gestureModeOn && System.currentTimeMillis() > directReleaseActiveUntil
+        }
         protocol.setGestureOfferProvider { gestureReporter.offer() }
 
         // 1) Send the challenge so the Mac can build its proof.
@@ -998,6 +1097,7 @@ class BonjourAdvertiser(private val context: Context) {
             // Delivered: the Mac verified the hash on its side. Now it's safe to
             // forget it.
             outgoingQueue.remove(file)
+            directReleaseActiveUntil = 0L
             // The Mac closes as soon as it has the last byte, so this courtesy
             // line can race a closed socket. Never let that turn a good transfer
             // into a "failed" row on the phone.
@@ -1006,6 +1106,8 @@ class BonjourAdvertiser(private val context: Context) {
             _state.value = _state.value.copy(
                 isSending = false,
                 transferFailed = false,
+                isStagedFileGrabbed = false,
+                stagedFileName = null,
                 transferStatus = "Sent ${file.name} to Mac ✓",
             )
         } catch (e: Exception) {

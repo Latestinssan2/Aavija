@@ -73,6 +73,23 @@ class GestureShareService : Service() {
     }
 
     private lateinit var runtime: AavijaRuntime
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager ?: return
+        wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "aavija:gesture_camera").apply {
+            setReferenceCounted(false)
+            acquire(60 * 60 * 1000L) // 1 hr max safeguard
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {}
+        wakeLock = null
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -120,6 +137,7 @@ class GestureShareService : Service() {
     }
 
     override fun onDestroy() {
+        releaseWakeLock()
         runtime.onServiceStopped()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
@@ -136,6 +154,7 @@ class GestureShareService : Service() {
         }
 
     private fun startForegroundWith(includeProjection: Boolean) {
+        acquireWakeLock()
         val notification = buildNotification(includeProjection)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA

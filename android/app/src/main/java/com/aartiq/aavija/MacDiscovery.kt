@@ -9,66 +9,43 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Finds Macs on this Wi-Fi so the phone can show them as a list of devices
- * you could pair with (Phase 5a).
+ * Finds macOS computers and Windows PCs on this local Wi-Fi running Aavija.
  *
- * ### Why the phone has to browse
- * In our swapped architecture the phone is the *listener*: it advertises and
- * waits for a Mac to dial in. That's great for connecting, but it means a phone
- * otherwise has no idea which Macs exist — it only learns about a Mac when one
- * happens to call. To let you *pick* a Mac, the Mac now announces itself with
- * `DNSServiceRegister` (service type [_aavija-mac._tcp][MAC_SERVICE_TYPE]) and
- * this class listens for those announcements.
- *
- * ### The two-step nature of NsdManager
- * `onServiceFound` hands you the *instance name* (the Mac's real machine name)
- * but nothing else. The usual next step is [NsdManager.resolveService], which
- * fills in the address and port — and which is, in practice, the single most
- * failure-prone call in the whole API (it throws if another resolve is in
- * flight, and it silently times out when a record is fresh).
- *
- * We deliberately **don't call it**. Resolving exists to learn *where* to dial,
- * and this phone never dials a Mac — in our swapped architecture the Mac dials
- * us. So the name from `onServiceFound` is all we need, and skipping resolve
- * turns a flaky list into an instant one.
- *
- * This is Android's side of discovery; the Mac's side is `Browser.swift`,
- * which browses for the *phone's* service. The two run independently and do
- * not know about each other.
+ * Browses for:
+ * - macOS: `_aavija-mac._tcp`
+ * - Windows: `_aavija-win._tcp`
  */
 class MacDiscovery(context: Context) {
 
     companion object {
-        private const val TAG = "AavijaMacDiscovery"
+        private const val TAG = "AavijaDesktopDiscovery"
         /** Must match `MacAdvertiser.serviceType` on the Mac exactly. */
         const val MAC_SERVICE_TYPE = "_aavija-mac._tcp"
+        /** Must match `DesktopAdvertiser.serviceType` on Windows exactly. */
+        const val WIN_SERVICE_TYPE = "_aavija-win._tcp"
 
-        /**
-         * Is a service type reported by Android the one we're browsing for?
-         *
-         * Android is inconsistent about the exact string it hands back: some
-         * versions return `_aavija-mac._tcp`, others `_aavija-mac._tcp.local.`
-         * or a different case. Comparing literally (which is what this used to
-         * do) throws away every Mac the moment the string doesn't match
-         * character-for-character — so normalise first, then compare.
-         */
-        fun isOurType(reported: String?): Boolean {
-            val normalised = (reported ?: "")
+        fun normaliseType(reported: String?): String {
+            return (reported ?: "")
                 .trim()
                 .trimEnd('.')
                 .removeSuffix(".local")
                 .trimEnd('.')
                 .lowercase()
-            return normalised == MAC_SERVICE_TYPE
         }
+
+        fun isMacType(reported: String?): Boolean = normaliseType(reported) == MAC_SERVICE_TYPE
+        fun isWinType(reported: String?): Boolean = normaliseType(reported) == WIN_SERVICE_TYPE
+        fun isOurType(reported: String?): Boolean = isMacType(reported) || isWinType(reported)
     }
 
-    /** One Mac the phone can see on this network. */
+    /** One desktop computer (Mac or Windows PC) the phone can see on this network. */
     data class MacDevice(
         /** Unique per service instance — the announced name, used as our id. */
         val id: String,
-        /** Human-readable name, e.g. "Sandipkumar's MacBook Pro". */
+        /** Human-readable name, e.g. "Sandipkumar's MacBook Pro" or "Preet-PC". */
         val name: String,
+        /** Whether this desktop target is a Windows PC. */
+        val isWindows: Boolean = false,
     )
 
     private val _macs = MutableStateFlow<List<MacDevice>>(emptyList())
@@ -78,11 +55,17 @@ class MacDiscovery(context: Context) {
     private val nsdManager =
         context.getSystemService(Context.NSD_SERVICE) as NsdManager
 
-    private var discoveryListener: NsdManager.DiscoveryListener? = null
+    private var macListener: NsdManager.DiscoveryListener? = null
+    private var winListener: NsdManager.DiscoveryListener? = null
 
-    /** Start watching for Macs. Safe to call more than once. */
+    /** Start watching for both Mac and Windows desktops. */
     fun start() {
-        if (discoveryListener != null) return
+        startMacDiscovery()
+        startWinDiscovery()
+    }
+
+    private fun startMacDiscovery() {
+        if (macListener != null) return
 
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {
@@ -90,18 +73,12 @@ class MacDiscovery(context: Context) {
             }
 
             override fun onServiceFound(info: NsdServiceInfo) {
-                // A Mac announced itself. Android can surface other service
-                // types on some networks, so filter — but leniently (see
-                // isOurType) rather than with a literal string compare.
-                if (!isOurType(info.serviceType)) {
-                    Log.d(TAG, "Ignoring service '${info.serviceName}' of type '${info.serviceType}'")
-                    return
-                }
-                addDevice(info.serviceName)
+                if (!isMacType(info.serviceType)) return
+                addDevice(info.serviceName, isWindows = false)
             }
 
             override fun onServiceLost(info: NsdServiceInfo) {
-                if (!isOurType(info.serviceType)) return
+                if (!isMacType(info.serviceType)) return
                 Log.i(TAG, "Mac went away: ${info.serviceName}")
                 _macs.value = _macs.value.filterNot { it.id == info.serviceName }
             }
@@ -111,49 +88,86 @@ class MacDiscovery(context: Context) {
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                Log.e(TAG, "startDiscovery failed: code $errorCode")
-                discoveryListener = null
+                Log.e(TAG, "startDiscovery Mac failed: code $errorCode")
+                macListener = null
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                Log.e(TAG, "stopDiscovery failed: code $errorCode")
+                Log.e(TAG, "stopDiscovery Mac failed: code $errorCode")
             }
         }
 
-        discoveryListener = listener
-        // PROTOCOL_DNS_SD = 1: the DNS-Service-Discovery protocol (Bonjour).
-        nsdManager.discoverServices(MAC_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+        macListener = listener
+        try {
+            nsdManager.discoverServices(MAC_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting Mac discovery: ${e.message}")
+            macListener = null
+        }
     }
 
-    /**
-     * Add (or re-announce) one Mac. Called straight from `onServiceFound`.
-     *
-     * Android re-sends the announcement every so often, so this runs again for
-     * a Mac we already have. We must NOT duplicate the row or reorder the
-     * list — the user may be about to tap one, and a list that reshuffles under
-     * their finger picks the wrong device. Hence: keep the existing entry
-     * untouched if we already have it, and sort by name so order is stable.
-     */
-    private fun addDevice(name: String?) {
+    private fun startWinDiscovery() {
+        if (winListener != null) return
+
+        val listener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(serviceType: String) {
+                Log.i(TAG, "Browsing for Windows $serviceType")
+            }
+
+            override fun onServiceFound(info: NsdServiceInfo) {
+                if (!isWinType(info.serviceType)) return
+                addDevice(info.serviceName, isWindows = true)
+            }
+
+            override fun onServiceLost(info: NsdServiceInfo) {
+                if (!isWinType(info.serviceType)) return
+                Log.i(TAG, "Windows PC went away: ${info.serviceName}")
+                _macs.value = _macs.value.filterNot { it.id == info.serviceName }
+            }
+
+            override fun onDiscoveryStopped(serviceType: String) {
+                Log.i(TAG, "Stopped browsing Windows $serviceType")
+            }
+
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                Log.e(TAG, "startDiscovery Windows failed: code $errorCode")
+                winListener = null
+            }
+
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
+                Log.e(TAG, "stopDiscovery Windows failed: code $errorCode")
+            }
+        }
+
+        winListener = listener
+        try {
+            nsdManager.discoverServices(WIN_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting Windows discovery: ${e.message}")
+            winListener = null
+        }
+    }
+
+    /** Add (or re-announce) one desktop machine (Mac or Windows). */
+    private fun addDevice(name: String?, isWindows: Boolean) {
         val id = name ?: return
         val current = _macs.value
-        if (current.any { it.id == id }) return // already listed — leave it alone
-        Log.i(TAG, "Found Mac: $id")
-        _macs.value = (current + MacDevice(id = id, name = id))
+        if (current.any { it.id == id }) return
+        Log.i(TAG, "Found ${if (isWindows) "Windows PC" else "Mac"}: $id")
+        _macs.value = (current + MacDevice(id = id, name = id, isWindows = isWindows))
             .sortedBy { it.name.lowercase() }
     }
 
     /** Stop browsing and forget everything found (called on teardown). */
     fun stop() {
-        discoveryListener?.let { listener ->
-            try {
-                nsdManager.stopServiceDiscovery(listener)
-            } catch (e: Exception) {
-                // Already stopped — nothing to do.
-                Log.d(TAG, "stopServiceDiscovery: ${e.message}")
-            }
+        macListener?.let {
+            try { nsdManager.stopServiceDiscovery(it) } catch (ignored: Exception) {}
         }
-        discoveryListener = null
+        winListener?.let {
+            try { nsdManager.stopServiceDiscovery(it) } catch (ignored: Exception) {}
+        }
+        macListener = null
+        winListener = null
         _macs.value = emptyList()
     }
 }

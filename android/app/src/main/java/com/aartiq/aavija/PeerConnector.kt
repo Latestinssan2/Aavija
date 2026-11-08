@@ -630,6 +630,12 @@ class PeerConnector(
         maybePush()
     }
 
+    /** Triggered by Mid-Air Direct Release (🖐) or the Direct Send button. */
+    fun triggerDirectPush() {
+        resumeTarget()
+        maybePush()
+    }
+
     // MARK: - file transfer
 
     private fun maybePush() {
@@ -728,6 +734,7 @@ class PeerConnector(
             val reply = PeerProtocol.parseVerdict(FileTransfer.readLine(connection.input))
             if (reply?.type == "received") {
                 advertiser.removeOutgoing(file)
+                advertiser.markFileGrabbed(false)
                 AavijaSounds.transferComplete()
                 advertiser.reportPeerTransfer(
                     "Sent ${file.name} to ${peer.name} ✓",
@@ -951,6 +958,18 @@ class PeerConnector(
 
     /** Only used by the UI to decide whether a peer row is trusted. */
     fun isPairedWith(peerId: String): Boolean = store.find(peerId) != null
+
+    fun getPairedPeers(): List<PairedPeer> = store.peers()
+
+    fun unpairPeer(id: String) {
+        val peer = store.find(id) ?: return
+        forgetStalePairing(peer)
+    }
+
+    fun unpairAllPeers() {
+        val peers = store.peers()
+        peers.forEach { forgetStalePairing(it) }
+    }
 
     /**
      * Stop treating the paired phone as the send target, without forgetting the
