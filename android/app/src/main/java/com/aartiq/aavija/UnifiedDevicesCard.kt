@@ -70,6 +70,7 @@ fun UnifiedDevicesCard(
 ) {
     val colors = LocalAavijaColors.current
     val isDark = colors.isDark
+    val onlineCount = devices.count { it.isReachable }
 
     val infiniteTransition = rememberInfiniteTransition(label = "radar_sweep")
     val radarSweep by infiniteTransition.animateFloat(
@@ -98,6 +99,7 @@ fun UnifiedDevicesCard(
         border = BorderStroke(1.dp, colors.surfaceBorder),
         shadowElevation = if (isDark) 0.dp else 4.dp,
         modifier = modifier
+            .aavijaBackdropBlur()
             .fillMaxWidth()
             .shadow(if (isDark) 0.dp else 12.dp, RoundedCornerShape(24.dp)),
     ) {
@@ -132,13 +134,13 @@ fun UnifiedDevicesCard(
 
                     Column {
                         Text(
-                            text = "Nearby Devices",
+                            text = "Devices nearby",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = colors.textPrimary,
                         )
                         Text(
-                            text = "Single Wi-Fi Peer Radar",
+                            text = "Choose where your file should go",
                             fontSize = 11.sp,
                             color = colors.textTertiary,
                         )
@@ -148,17 +150,17 @@ fun UnifiedDevicesCard(
                 // Device Count Badge
                 Surface(
                     shape = CircleShape,
-                    color = if (devices.isNotEmpty()) Color(0xFF00E5FF).copy(alpha = 0.15f) else (if (isDark) Color(0x1AFFFFFF) else Color(0x0D000000)),
+                    color = if (onlineCount > 0) Color(0xFF00E5FF).copy(alpha = 0.15f) else (if (isDark) Color(0x1AFFFFFF) else Color(0x0D000000)),
                     border = BorderStroke(
                         1.dp,
-                        if (devices.isNotEmpty()) Color(0xFF00E5FF).copy(alpha = 0.35f) else colors.surfaceBorder,
+                        if (onlineCount > 0) Color(0xFF00E5FF).copy(alpha = 0.35f) else colors.surfaceBorder,
                     ),
                 ) {
                     Text(
-                        text = if (devices.isNotEmpty()) "${devices.size} found" else "Scanning...",
+                        text = if (onlineCount > 0) "$onlineCount online" else "Searching",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (devices.isNotEmpty()) Color(0xFF00E5FF) else colors.textSecondary,
+                        color = if (onlineCount > 0) Color(0xFF00E5FF) else colors.textSecondary,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     )
                 }
@@ -281,9 +283,10 @@ private fun UnifiedDeviceRow(
                         )
                         Text(
                             text = when {
-                                device.isActiveTarget -> "Active Send Target"
-                                device.isPaired -> "Paired & Ready"
-                                else -> "Tap to Connect"
+                                !device.isReachable -> "Offline"
+                                device.isActiveTarget -> "Selected for sharing"
+                                device.isPaired -> "Ready to share"
+                                else -> "Tap to connect"
                             },
                             fontSize = 11.sp,
                             color = if (device.isActiveTarget) Color(0xFF00E5FF) else colors.textSecondary,
@@ -331,13 +334,15 @@ private fun UnifiedDeviceRow(
                 ) {
                     Text(
                         text = when {
-                            device.isActiveTarget -> "Active ⚡"
-                            device.isPaired -> "Paired ✓"
-                            else -> "Pair →"
+                            !device.isReachable -> "Offline"
+                            device.isActiveTarget -> "Selected"
+                            device.isPaired -> "Connected"
+                            else -> "Connect →"
                         },
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = when {
+                            !device.isReachable -> colors.textTertiary
                             device.isActiveTarget -> Color(0xFF060911)
                             device.isPaired -> Color(0xFF10B981)
                             else -> colors.textSecondary
@@ -389,7 +394,7 @@ private fun RadarScanningEmptyState(
             Spacer(Modifier.height(14.dp))
 
             Text(
-                text = "Scanning Local Wi-Fi...",
+                text = "Looking for your devices",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = colors.textPrimary,
@@ -398,7 +403,7 @@ private fun RadarScanningEmptyState(
             Spacer(Modifier.height(4.dp))
 
             Text(
-                text = "Open Aavija on your Mac, Windows PC, or another Android phone on the same Wi-Fi network.",
+                text = "Open Aavija on your other device and connect both devices to the same Wi-Fi.",
                 fontSize = 11.5.sp,
                 color = colors.textSecondary,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,

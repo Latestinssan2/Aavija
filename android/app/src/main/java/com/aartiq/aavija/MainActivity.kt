@@ -33,6 +33,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -74,6 +75,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -109,9 +111,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -136,6 +141,16 @@ class MainActivity : ComponentActivity() {
     private val deepLinkFlow = kotlinx.coroutines.flow.MutableStateFlow<DeepLinkAction?>(null)
 
     private fun handleIntentData(intent: Intent?) {
+        val showImageUri = intent?.getStringExtra("show_image_uri")
+        val showImageName = intent?.getStringExtra("show_image_name")
+        if (showImageUri != null) {
+            runtime.pendingReceivedImage.value = BonjourAdvertiser.ReceivedImage(
+                uri = Uri.parse(showImageUri),
+                name = showImageName ?: "photo",
+                eventId = System.currentTimeMillis(),
+            )
+        }
+
         val uri = intent?.data ?: return
         val scheme = uri.scheme?.lowercase()
         val host = uri.host?.lowercase()
@@ -223,7 +238,10 @@ class MainActivity : ComponentActivity() {
 
                     AnimatedVisibility(
                         visible = showSplash,
-                        enter = fadeIn(tween(150)),
+                        enter = fadeIn(tween(280)) + scaleIn(
+                            initialScale = 0.94f,
+                            animationSpec = tween(520, easing = FastOutSlowInEasing),
+                        ),
                         exit = fadeOut(tween(450)) + scaleOut(targetScale = 1.08f, animationSpec = tween(450)),
                     ) {
                         AavijaSplashScreen(
@@ -288,6 +306,7 @@ fun AdvertiserScreen(
     val context = LocalContext.current
     val colors = LocalAavijaColors.current
     val scope = rememberCoroutineScope()
+    val hazeState = rememberHazeState()
 
     var showGuide by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
@@ -296,6 +315,13 @@ fun AdvertiserScreen(
 
     val geminiAssistant = remember {
         GeminiAssistant(context = context, runtime = runtime, scope = scope)
+    }
+
+    val authManager = remember { AavijaAuthManager(context) }
+    val googleSignInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        authManager.handleSignInResult(result.data) { _, _ -> }
     }
 
     val deepLink by deepLinkFlow.collectAsState()
@@ -419,6 +445,13 @@ fun AdvertiserScreen(
             lastShownImageId = image.eventId
             openImage = image
         }
+    }
+
+    val pendingImageFromRuntime by runtime.pendingReceivedImage.collectAsState()
+    LaunchedEffect(pendingImageFromRuntime) {
+        val img = pendingImageFromRuntime ?: return@LaunchedEffect
+        openImage = img
+        runtime.pendingReceivedImage.value = null
     }
 
     // Buzz on wrong PIN
@@ -607,196 +640,173 @@ fun AdvertiserScreen(
             .fillMaxSize()
             .background(colors.bgGradient),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 24.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // Ultra-clean Top Bar: Borderless Wide Logo + Borderless Settings Icon
-            HeaderBar(
-                onOpenSettings = { showSettings = true },
-            )
+        AmbientAuroraBackdrop(modifier = Modifier.fillMaxSize())
 
-            Spacer(Modifier.height(24.dp))
-
-            // Primary Discoverability Hero Card
-            DiscoverabilityCard(state = state)
-
-            Spacer(Modifier.height(14.dp))
-
-            // Magic Blackout Screen Button (for video demonstrations)
-            Surface(
-                color = colors.surface,
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, colors.surfaceBorder),
+        CompositionLocalProvider(LocalAavijaHazeState provides hazeState) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        gestureWasOnBeforeBlackout = state.gestureMode
-                        showBlackoutHint = true
-                        isBlackoutMode = true
-                    }
-                    .shadow(8.dp, RoundedCornerShape(20.dp)),
+                    .fillMaxSize()
+                    .hazeSource(state = hazeState)
+                    .padding(horizontal = 20.dp, vertical = 24.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.Black)
-                            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("🪄", fontSize = 16.sp)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Magic Blackout Screen",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.textPrimary,
-                        )
-                        Text(
-                            text = "Pitch black screen • Perfect for video demo",
-                            fontSize = 11.5.sp,
-                            color = colors.textSecondary,
-                        )
-                    }
-                    Text(
-                        text = "Enter →",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.primary,
+                // Ultra-clean Top Bar: Borderless Wide Logo + Borderless Settings Icon
+                HeaderBar(
+                    onOpenSettings = { showSettings = true },
+                )
+
+                Spacer(Modifier.height(18.dp))
+
+                DashboardIntro()
+
+                Spacer(Modifier.height(20.dp))
+
+                DiscoverabilityCard(state = state)
+
+                Spacer(Modifier.height(24.dp))
+
+                DashboardSectionHeading(
+                    eyebrow = "STEP 1",
+                    title = "Choose a destination",
+                    detail = "Tap the device you want to send your file to.",
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                UnifiedDevicesCard(
+                    devices = unifiedDevices,
+                    isAdvertising = state.isAdvertising,
+                )
+
+                // Client-side pairing status ("Waiting for Pixel…", "Wrong PIN").
+                if (!peerState.isPairing && peerState.pairingStatus != null) {
+                    Spacer(Modifier.height(14.dp))
+                    StatusPill(
+                        text = peerState.pairingStatus!!,
+                        isPaired = peerState.isPaired && !peerState.pairingFailed,
+                        isWaiting = false,
                     )
                 }
-            }
 
-            Spacer(Modifier.height(20.dp))
-
-            // Single Unified Nearby Devices Radar (macOS, Windows, Android)
-            UnifiedDevicesCard(
-                devices = unifiedDevices,
-                isAdvertising = state.isAdvertising,
-            )
-
-            // Client-side pairing status ("Waiting for Pixel…", "Wrong PIN").
-            if (!peerState.isPairing && peerState.pairingStatus != null) {
-                Spacer(Modifier.height(14.dp))
-                StatusPill(
-                    text = peerState.pairingStatus!!,
-                    isPaired = peerState.isPaired && !peerState.pairingFailed,
-                    isWaiting = false,
-                )
-            }
-
-            // Connection / Pairing Status Banner
-            if (state.lastPairing != null) {
-                Spacer(Modifier.height(16.dp))
-                StatusPill(
-                    text = state.lastPairing!!,
-                    isPaired = state.isPaired,
-                    isWaiting = state.isWaitingForPin,
-                )
-            }
-
-            // File Transfer Status Banner
-            if (state.transferStatus != null) {
-                Spacer(Modifier.height(14.dp))
-                TransferStatusPill(
-                    status = state.transferStatus!!,
-                    isReceiving = state.isReceiving,
-                    failed = state.transferFailed,
-                )
-            }
-
-            // Dedicated Staged File State
-            var stagedFile by remember { mutableStateOf<StagedFileInfo?>(null) }
-
-            // Sync with advertiser's queue state (clears when delivered or cancelled)
-            LaunchedEffect(state.stagedFileName) {
-                if (state.stagedFileName == null && advertiser.peekOutgoing() == null) {
-                    stagedFile = null
-                }
-            }
-
-            // Quick Action: Send File / Mid-Air Gesture Staging
-            val scope = rememberCoroutineScope()
-            val pickLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenDocument()
-            ) { uri: Uri? ->
-                if (uri == null) return@rememberLauncherForActivityResult
-                try {
-                    context.contentResolver.takePersistableUriPermission(
-                        uri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                // Connection / Pairing Status Banner
+                if (state.lastPairing != null) {
+                    Spacer(Modifier.height(16.dp))
+                    StatusPill(
+                        text = state.lastPairing!!,
+                        isPaired = state.isPaired,
+                        isWaiting = state.isWaitingForPin,
                     )
-                } catch (_: SecurityException) {}
-                scope.launch {
-                    val meta = withContext(Dispatchers.IO) { readNameSizeAndHash(context, uri) }
-                    if (meta != null) {
-                        val mime = context.contentResolver.getType(uri)
-                        val thumb = withContext(Dispatchers.IO) { loadThumbnail(context, uri) }
-                        stagedFile = StagedFileInfo(
-                            uri = uri,
-                            name = meta.first,
-                            size = meta.second,
-                            sha256Hex = meta.third,
-                            mimeType = mime,
-                            thumbnail = thumb,
-                        )
-                        advertiser.queueOutgoingFile(uri, meta.first, meta.second, meta.third)
-                        // If a phone is the active target and not in gesture mode, send right away
-                        peerConnector.onFileQueued()
-                    } else {
-                        advertiser.reportOutgoingProblem("Couldn't read that file.")
+                }
+
+                // File Transfer Status Banner
+                if (state.transferStatus != null) {
+                    Spacer(Modifier.height(14.dp))
+                    TransferStatusPill(
+                        status = state.transferStatus!!,
+                        isReceiving = state.isReceiving,
+                        failed = state.transferFailed,
+                    )
+                }
+
+                // Dedicated Staged File State
+                var stagedFile by remember { mutableStateOf<StagedFileInfo?>(null) }
+
+                // Sync with advertiser's queue state (clears when delivered or cancelled)
+                LaunchedEffect(state.stagedFileName) {
+                    if (state.stagedFileName == null && advertiser.peekOutgoing() == null) {
+                        stagedFile = null
                     }
                 }
-            }
 
-            Spacer(Modifier.height(20.dp))
+                // Quick Action: Send File / Mid-Air Gesture Staging
+                val scope = rememberCoroutineScope()
+                val pickLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument()
+                ) { uri: Uri? ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    try {
+                        context.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                    } catch (_: SecurityException) {}
+                    scope.launch {
+                        val meta = withContext(Dispatchers.IO) { readNameSizeAndHash(context, uri) }
+                        if (meta != null) {
+                            val mime = context.contentResolver.getType(uri)
+                            val thumb = withContext(Dispatchers.IO) { loadThumbnail(context, uri) }
+                            stagedFile = StagedFileInfo(
+                                uri = uri,
+                                name = meta.first,
+                                size = meta.second,
+                                sha256Hex = meta.third,
+                                mimeType = mime,
+                                thumbnail = thumb,
+                            )
+                            advertiser.queueOutgoingFile(uri, meta.first, meta.second, meta.third)
+                            // If a phone is the active target and not in gesture mode, send right away
+                            peerConnector.onFileQueued()
+                        } else {
+                            advertiser.reportOutgoingProblem("Couldn't read that file.")
+                        }
+                    }
+                }
 
-            val currentStaged = stagedFile
-            if (currentStaged != null) {
-                StagedFilePreviewCard(
-                    file = currentStaged,
-                    isGrabbedInHand = state.isStagedFileGrabbed,
+                Spacer(Modifier.height(20.dp))
+
+                DashboardSectionHeading(
+                    eyebrow = "STEP 2",
+                    title = "Share a file",
+                    detail = "Choose a file or photo to send over your local Wi-Fi.",
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                QuickShareCard(
+                    file = stagedFile,
                     targetName = targetName,
-                    onDirectRelease = { runtime.triggerDirectRelease() },
-                    onToggleGrab = { advertiser.markFileGrabbed(!state.isStagedFileGrabbed) },
-                    onChangeFile = { pickLauncher.launch(arrayOf("*/*")) },
-                    onDiscard = {
+                    gestureMode = state.gestureMode,
+                    onChooseFile = { pickLauncher.launch(arrayOf("*/*")) },
+                )
+
+                Spacer(Modifier.height(20.dp))
+
+                DashboardSectionHeading(
+                    eyebrow = "OPTIONAL",
+                    title = "Gesture sharing",
+                    detail = "Use an open hand or fist to move files through the air.",
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                // Unified Gesture Mode with Integrated Mid-Air File Beaming
+                GestureModeSection(
+                    context = context,
+                    runtime = runtime,
+                    state = state,
+                    advertiser = advertiser,
+                    peerConnector = peerConnector,
+                    targetName = targetName,
+                    stagedFile = stagedFile,
+                    onDiscardFile = {
                         stagedFile = null
                         advertiser.discardOutgoingFile()
                     },
                 )
-            } else {
-                SelectFileToShareCard(
-                    targetName = targetName,
-                    onPickFile = { pickLauncher.launch(arrayOf("*/*")) },
+
+                Spacer(Modifier.height(14.dp))
+
+                MoreToolsCard(
+                    onEnterBlackout = {
+                        gestureWasOnBeforeBlackout = state.gestureMode
+                        showBlackoutHint = true
+                        isBlackoutMode = true
+                    },
                 )
+
+                Spacer(Modifier.height(36.dp))
             }
-
-            Spacer(Modifier.height(24.dp))
-
-            // Gesture Mode Interactive Card
-            GestureModeSection(
-                context = context,
-                runtime = runtime,
-                state = state,
-                advertiser = advertiser,
-                peerConnector = peerConnector,
-                targetName = targetName,
-            )
-
-            Spacer(Modifier.height(36.dp))
         }
 
         // Phase 8: Quantum Orb Overlay while transfer is actively moving bytes
@@ -841,6 +851,13 @@ fun AdvertiserScreen(
                     showGemini = true
                     geminiQuery = null
                 },
+                authManager = authManager,
+                onSignInGoogle = {
+                    val intent = authManager.getGoogleSignInIntent()
+                    if (intent != null) {
+                        googleSignInLauncher.launch(intent)
+                    }
+                },
                 onDismiss = { showSettings = false }
             )
         }
@@ -873,6 +890,42 @@ fun AdvertiserScreen(
 }
 
 @Composable
+private fun AmbientAuroraBackdrop(modifier: Modifier = Modifier) {
+    val colors = LocalAavijaColors.current
+    val motion = rememberInfiniteTransition(label = "home-aurora")
+    val drift by motion.animateFloat(
+        initialValue = -0.16f,
+        targetValue = 0.16f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(8_000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "aurora-drift",
+    )
+    Canvas(modifier = modifier) {
+        val radius = size.minDimension * 0.72f
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(colors.primary.copy(alpha = if (colors.isDark) 0.13f else 0.09f), Color.Transparent),
+                center = Offset(size.width * (0.10f + drift), size.height * 0.16f),
+                radius = radius,
+            ),
+            radius = radius,
+            center = Offset(size.width * (0.10f + drift), size.height * 0.16f),
+        )
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(colors.secondary.copy(alpha = if (colors.isDark) 0.10f else 0.07f), Color.Transparent),
+                center = Offset(size.width * (0.92f - drift), size.height * 0.48f),
+                radius = radius * 0.88f,
+            ),
+            radius = radius * 0.88f,
+            center = Offset(size.width * (0.92f - drift), size.height * 0.48f),
+        )
+    }
+}
+
+@Composable
 private fun rememberScreenCaptureRequester(
     context: Context,
     onProblem: (String?) -> Unit,
@@ -895,6 +948,165 @@ private fun rememberScreenCaptureRequester(
         {
             runCatching { launcher.launch(manager.createScreenCaptureIntent()) }
                 .onFailure { onProblem("Couldn't open the screen-capture dialog.") }
+        }
+    }
+}
+
+@Composable
+private fun DashboardIntro() {
+    val colors = LocalAavijaColors.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Share across your devices.",
+            fontSize = 27.sp,
+            lineHeight = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = colors.textPrimary,
+        )
+        Spacer(Modifier.height(5.dp))
+        Text(
+            text = "A simple, private way to move things around.",
+            fontSize = 14.sp,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun DashboardSectionHeading(
+    eyebrow: String,
+    title: String,
+    detail: String,
+) {
+    val colors = LocalAavijaColors.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = eyebrow,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.2.sp,
+            color = colors.primary,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = title,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Bold,
+            color = colors.textPrimary,
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = detail,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun QuickShareCard(
+    file: StagedFileInfo?,
+    targetName: String?,
+    gestureMode: Boolean,
+    onChooseFile: () -> Unit,
+) {
+    val colors = LocalAavijaColors.current
+    Surface(
+        color = colors.primary.copy(alpha = if (colors.isDark) 0.13f else 0.09f),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.30f)),
+        modifier = Modifier
+            .aavijaBackdropBlur()
+            .fillMaxWidth()
+            .clickable(onClick = onChooseFile),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(Brush.linearGradient(listOf(colors.primary, colors.secondary))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (file == null) "＋" else "✓",
+                    fontSize = 25.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White,
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file?.name ?: "Choose a file",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = when {
+                        file != null && gestureMode -> "${formatFileSize(file.size)} · Ready for gesture sharing"
+                        file != null -> "${formatFileSize(file.size)}${targetName?.let { " · Ready for $it" } ?: " · Ready to share"}"
+                        gestureMode -> "Choose a file to prepare a gesture handoff."
+                        targetName != null -> "Send to $targetName over your local Wi-Fi."
+                        else -> "Pick a file now, then connect to a nearby device."
+                    },
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    maxLines = 2,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (file == null) "→" else "Change",
+                fontSize = if (file == null) 22.sp else 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MoreToolsCard(onEnterBlackout: () -> Unit) {
+    val colors = LocalAavijaColors.current
+    Surface(
+        color = colors.surface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, colors.surfaceBorder),
+        modifier = Modifier
+            .aavijaBackdropBlur()
+            .fillMaxWidth()
+            .clickable(onClick = onEnterBlackout),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("◐", fontSize = 18.sp, color = Color.White)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Magic blackout", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
+                Text("Black out the screen for demos and presentations.", fontSize = 11.5.sp, color = colors.textSecondary)
+            }
+            Text("→", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = colors.primary)
         }
     }
 }
@@ -958,25 +1170,25 @@ private fun DiscoverabilityCard(state: BonjourAdvertiser.AdState) {
 
     Surface(
         color = colors.surface,
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, colors.surfaceBorder),
+        shape = RoundedCornerShape(22.dp),
+        border = BorderStroke(1.dp, if (state.isAdvertising) colors.statusSuccess.copy(alpha = 0.38f) else colors.surfaceBorder),
         modifier = Modifier
+            .aavijaBackdropBlur()
             .fillMaxWidth()
-            .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = Color.Black.copy(alpha = 0.05f)),
+            .shadow(8.dp, RoundedCornerShape(22.dp), ambientColor = Color.Black.copy(alpha = 0.05f)),
     ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Live Status Beacon
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(48.dp)
                     .graphicsLayer {
                         scaleX = if (state.isAdvertising) pulseScale else 1f
                         scaleY = if (state.isAdvertising) pulseScale else 1f
                     }
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(
                         if (state.isAdvertising) colors.statusSuccess.copy(alpha = 0.16f)
                         else colors.statusWarning.copy(alpha = 0.16f)
@@ -985,7 +1197,7 @@ private fun DiscoverabilityCard(state: BonjourAdvertiser.AdState) {
             ) {
                 Box(
                     modifier = Modifier
-                        .size(24.dp)
+                    .size(13.dp)
                         .clip(CircleShape)
                         .background(
                             if (state.isAdvertising) colors.statusSuccess
@@ -993,43 +1205,39 @@ private fun DiscoverabilityCard(state: BonjourAdvertiser.AdState) {
                         ),
                 )
             }
-
-            Spacer(Modifier.height(14.dp))
-
-            Text(
-                text = if (state.isAdvertising) "Discoverable on this Wi-Fi" else "Starting discovery…",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
-            )
-
-            Spacer(Modifier.height(6.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
+            Spacer(Modifier.width(13.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (state.isAdvertising) "Ready to share" else "Connecting to Wi-Fi…",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = if (state.isAdvertising) {
+                        "${state.serviceName ?: "This device"} is visible nearby"
+                    } else {
+                        "Nearby devices will appear here automatically."
+                    },
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    maxLines = 2,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Surface(
+                shape = CircleShape,
+                color = if (state.isAdvertising) colors.statusSuccess.copy(alpha = 0.14f) else colors.statusWarning.copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, if (state.isAdvertising) colors.statusSuccess.copy(alpha = 0.32f) else colors.statusWarning.copy(alpha = 0.32f)),
             ) {
                 Text(
-                    text = "Device: ",
-                    fontSize = 13.sp,
-                    color = colors.textTertiary,
-                )
-                Text(
-                    text = state.serviceName ?: "Android",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.textSecondary,
-                )
-                Text(
-                    text = "  •  Port: ",
-                    fontSize = 13.sp,
-                    color = colors.textTertiary,
-                )
-                Text(
-                    text = "${state.port}",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.textSecondary,
+                    text = if (state.isAdvertising) "LIVE" else "WAIT",
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    fontSize = 9.sp,
+                    letterSpacing = 0.8.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (state.isAdvertising) colors.statusSuccess else colors.statusWarning,
                 )
             }
         }
@@ -1474,83 +1682,59 @@ data class StagedFileInfo(
 )
 
 @Composable
-private fun StagedFilePreviewCard(
+private fun IntegratedGestureFileBanner(
     file: StagedFileInfo,
     isGrabbedInHand: Boolean,
     targetName: String?,
-    onDirectRelease: () -> Unit,
-    onToggleGrab: () -> Unit,
-    onChangeFile: () -> Unit,
     onDiscard: () -> Unit,
 ) {
     val colors = LocalAavijaColors.current
 
     Surface(
-        color = colors.surface,
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.14f) else colors.primary.copy(alpha = 0.12f),
         border = BorderStroke(
-            1.5.dp,
-            if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.6f) else colors.primary.copy(alpha = 0.45f),
+            1.dp,
+            if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.5f) else colors.primary.copy(alpha = 0.4f),
         ),
         modifier = Modifier
-            .fillMaxWidth()
-            .shadow(
-                12.dp,
-                RoundedCornerShape(22.dp),
-                spotColor = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.35f) else colors.primary.copy(alpha = 0.25f),
-            ),
+            .aavijaBackdropBlur()
+            .fillMaxWidth(),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-        ) {
-            // Header: Status badge + Discard button
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.18f) else colors.primary.copy(alpha = 0.16f),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.4f) else colors.primary.copy(alpha = 0.35f),
-                    ),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(if (isGrabbedInHand) Color(0xFFF59E0B) else colors.primary),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = if (isGrabbedInHand) "HELD IN HAND ✊" else "READY TO BEAM ⚡",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.primary,
-                            letterSpacing = 0.5.sp,
-                        )
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(if (isGrabbedInHand) Color(0xFFF59E0B) else colors.primary),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (isGrabbedInHand) "ARMED IN HAND ✊" else "ARMED FOR GESTURE BEAM ⚡",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.primary,
+                        letterSpacing = 0.5.sp,
+                    )
                 }
 
                 Surface(
                     shape = CircleShape,
-                    color = colors.textSecondary.copy(alpha = 0.12f),
+                    color = colors.textSecondary.copy(alpha = 0.15f),
                     modifier = Modifier
-                        .size(30.dp)
+                        .size(26.dp)
                         .clickable { onDiscard() },
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
                             text = "✕",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             color = colors.textSecondary,
                         )
@@ -1558,264 +1742,52 @@ private fun StagedFilePreviewCard(
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
 
-            // Visual Preview (Image or File Icon Box)
-            if (file.thumbnail != null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Black.copy(alpha = 0.4f)),
-                    contentAlignment = Alignment.Center,
-                ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (file.thumbnail != null) {
                     Image(
                         bitmap = file.thumbnail.asImageBitmap(),
                         contentDescription = file.name,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // Bottom gradient vignette with file metadata
-                    Box(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
-                                    startY = 60f,
-                                ),
-                            ),
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
                     )
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = colors.primary.copy(alpha = 0.15f),
+                        modifier = Modifier.size(52.dp),
                     ) {
-                        Text(
-                            text = file.name,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "• ${formatFileSize(file.size)}",
-                            fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.85f),
-                        )
-                    }
-                }
-            } else {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = colors.textSecondary.copy(alpha = 0.08f),
-                    border = BorderStroke(1.dp, colors.textSecondary.copy(alpha = 0.15f)),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = colors.primary.copy(alpha = 0.15f),
-                            modifier = Modifier.size(44.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = getFileIcon(file.name, file.mimeType),
-                                    fontSize = 22.sp,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = file.name,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                text = "${formatFileSize(file.size)} • ${file.mimeType ?: "File"}",
-                                fontSize = 12.sp,
-                                color = colors.textSecondary,
-                            )
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(text = getFileIcon(file.name, file.mimeType), fontSize = 24.sp)
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.width(12.dp))
 
-            // Guidance banner
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.12f) else colors.primary.copy(alpha = 0.08f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (isGrabbedInHand) "✊" else "🖐",
-                        fontSize = 15.sp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (isGrabbedInHand) {
-                            "Locked in hand! Aim at ${targetName ?: "device"} & open hand 🖐 (RELEASE) to beam."
-                        } else {
-                            "Direct Release 🖐 to beam instantly, or GRAB ✊ to hold in hand."
-                        },
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.textPrimary,
-                        lineHeight = 16.sp,
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // Action Buttons Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Primary action: Direct Release 🖐
-                Button(
-                    onClick = onDirectRelease,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.primary,
-                        contentColor = Color.Black,
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                ) {
-                    Text(
-                        text = "Direct Release 🖐",
-                        fontSize = 13.sp,
+                        text = file.name,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary,
+                        maxLines = 1,
                     )
-                }
-
-                // Secondary toggle: Hold in Hand ✊
-                Button(
-                    onClick = onToggleGrab,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.2f) else colors.textSecondary.copy(alpha = 0.14f),
-                        contentColor = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.textPrimary,
-                    ),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isGrabbedInHand) Color(0xFFF59E0B).copy(alpha = 0.5f) else colors.textSecondary.copy(alpha = 0.2f),
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.height(44.dp),
-                ) {
+                    Spacer(Modifier.height(3.dp))
                     Text(
-                        text = if (isGrabbedInHand) "Put Down" else "Hold ✊",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        text = "${formatFileSize(file.size)} • ${if (isGrabbedInHand) "Aim & open hand 🖐 to beam" else "✊ Fist to hold • 🖐 Palm to beam"}",
+                        fontSize = 11.5.sp,
+                        color = if (isGrabbedInHand) Color(0xFFF59E0B) else colors.textSecondary,
+                        lineHeight = 15.sp,
                     )
                 }
-
-                // Change file button
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = colors.textSecondary.copy(alpha = 0.12f),
-                    modifier = Modifier
-                        .height(44.dp)
-                        .clickable { onChangeFile() },
-                ) {
-                    Box(
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "Change",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.textSecondary,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SelectFileToShareCard(
-    targetName: String?,
-    onPickFile: () -> Unit,
-) {
-    val colors = LocalAavijaColors.current
-
-    Surface(
-        color = colors.surface,
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.35f)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onPickFile() },
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = colors.primary.copy(alpha = 0.15f),
-                modifier = Modifier.size(44.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(text = "📁", fontSize = 22.sp)
-                }
-            }
-
-            Spacer(Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (targetName != null) "Select File to Beam to $targetName…" else "Select File or Photo to Beam…",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.textPrimary,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = "Share with Direct Release 🖐 or Grab ✊ without screenshot",
-                    fontSize = 11.sp,
-                    color = colors.textSecondary,
-                )
-            }
-
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = colors.primary.copy(alpha = 0.12f),
-                border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.3f)),
-            ) {
-                Text(
-                    text = "Pick",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.primary,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                )
             }
         }
     }
@@ -1829,6 +1801,8 @@ private fun GestureModeSection(
     advertiser: BonjourAdvertiser,
     peerConnector: PeerConnector,
     targetName: String?,
+    stagedFile: StagedFileInfo?,
+    onDiscardFile: () -> Unit,
 ) {
     val colors = LocalAavijaColors.current
     // The switch follows the service, not a local flag, so it stays correct
@@ -1897,6 +1871,7 @@ private fun GestureModeSection(
             if (gestureMode) colors.primary.copy(alpha = 0.40f) else colors.surfaceBorder,
         ),
         modifier = Modifier
+            .aavijaBackdropBlur()
             .fillMaxWidth()
             .shadow(12.dp, RoundedCornerShape(24.dp)),
     ) {
@@ -1951,8 +1926,29 @@ private fun GestureModeSection(
                 )
             }
 
+            Spacer(Modifier.height(14.dp))
+
+            // Integrated File Staging inside Gesture Mode
+            if (stagedFile != null) {
+                IntegratedGestureFileBanner(
+                    file = stagedFile,
+                    isGrabbedInHand = state.isStagedFileGrabbed,
+                    targetName = targetName,
+                    onDiscard = onDiscardFile,
+                )
+                Spacer(Modifier.height(14.dp))
+            } else if (gestureMode) {
+                Text(
+                    text = "Choose a file above to prepare a gesture share.",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                )
+            }
+
             if (gestureMode && cameraGranted) {
-                Spacer(Modifier.height(18.dp))
                 val pose by runtime.gestureCamera.pose.collectAsState()
                 val cameraError by runtime.gestureCamera.error.collectAsState()
                 LaunchedEffect(cameraError) {
@@ -1973,7 +1969,7 @@ private fun GestureModeSection(
 
                     // Floating Pose Indicator Badge inside Camera Preview
                     Surface(
-                        color = Color.Black.copy(alpha = 0.65f),
+                        color = Color.Black.copy(alpha = 0.70f),
                         shape = RoundedCornerShape(14.dp),
                         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.20f)),
                         modifier = Modifier
@@ -1984,21 +1980,26 @@ private fun GestureModeSection(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            val poseEmoji = when (pose) {
-                                HandPose.OPEN -> "🖐"
-                                HandPose.FIST -> "✊"
-                                HandPose.UNKNOWN -> "🔍"
+                            val poseEmoji = when {
+                                stagedFile != null && pose == HandPose.FIST -> "✊"
+                                stagedFile != null && pose == HandPose.OPEN -> "🖐"
+                                pose == HandPose.OPEN -> "🖐"
+                                pose == HandPose.FIST -> "✊"
+                                else -> "🔍"
                             }
-                            val poseLabel = when (pose) {
-                                HandPose.OPEN -> "Open hand — ready to grab"
-                                HandPose.FIST -> "Fist — holding"
-                                HandPose.UNKNOWN -> "Show your hand to the camera"
+                            val poseLabel = when {
+                                stagedFile != null && pose == HandPose.FIST -> "✊ Gripped ${stagedFile.name} — Aim & open hand 🖐"
+                                stagedFile != null && pose == HandPose.OPEN -> "🖐 Direct Beaming ${stagedFile.name}!"
+                                stagedFile != null -> "Aim at ${targetName ?: "device"}: ✊ Fist to hold • 🖐 Palm to throw"
+                                pose == HandPose.OPEN -> "Open hand — ready to grab"
+                                pose == HandPose.FIST -> "Fist — holding screenshot"
+                                else -> "Show your hand to the camera"
                             }
                             Text(poseEmoji, fontSize = 16.sp)
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 poseLabel,
-                                fontSize = 13.sp,
+                                fontSize = 12.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
                             )

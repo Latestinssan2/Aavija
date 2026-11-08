@@ -19,6 +19,10 @@ local.properties
 .idea/
 .cxx/
 captures/
+*.jks
+*.keystore
+google-services.json
+android/app/google-services.json
 
 # Artifacts & Vercel
 release-artifacts/

@@ -992,9 +992,14 @@ class BonjourAdvertiser(private val context: Context) {
         _state.value = _state.value.copy(
             isReceiving = true,
             transferFailed = false,
-            transferStatus = "Receiving ${header.filename}…",
+            transferStatus = "આવતું છે... Receiving ${header.filename}",
         )
         AavijaSounds.transferStart()
+
+        val runtime = AavijaRuntime.get(context)
+        if (!runtime.uiVisible) {
+            wakeAndLaunchIncomingActivity(context, header.filename)
+        }
 
         val sink = try {
             ReceivedFiles.open(context, header.filename)
@@ -1234,4 +1239,52 @@ private fun postReceivedImageNotification(context: Context, uri: android.net.Uri
         builder.setStyle(NotificationCompat.BigPictureStyle().bigPicture(bitmap))
     }
     manager.notify(4202, builder.build())
+}
+
+/** Wakes the device and launches MainActivity with the "આવતું છે" animation when receiving files in background. */
+fun wakeAndLaunchIncomingActivity(context: Context, filename: String) {
+    try {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channelId = "aavija_incoming_transfer"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Incoming Transfers (આવતું છે)",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Wakes screen and opens Aavija when files stream via mid-air gestures"
+                enableVibration(true)
+                setShowBadge(true)
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        val launchIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("incoming_transfer", true)
+            putExtra("incoming_filename", filename)
+        }
+        val fullScreenPending = PendingIntent.getActivity(
+            context,
+            4203,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.drawable.ic_stat_gesture)
+            .setContentTitle("આવતું છે ⚡ Receiving $filename")
+            .setContentText("Incoming file via Aavija mid-air gesture share…")
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(fullScreenPending, true)
+            .setContentIntent(fullScreenPending)
+            .setAutoCancel(true)
+            .build()
+
+        manager.notify(4203, notification)
+        context.startActivity(launchIntent)
+    } catch (e: Exception) {
+        Log.e("Aavija", "Could not wake activity for incoming transfer: ${e.message}")
+    }
 }

@@ -8,3 +8,7 @@ local.properties
 /captures
 .externalNativeBuild/
 .cxx/
+*.jks
+*.keystore
+google-services.json
+app/google-services.json

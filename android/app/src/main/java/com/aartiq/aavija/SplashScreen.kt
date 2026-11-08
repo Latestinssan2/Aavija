@@ -5,6 +5,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -18,9 +19,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -58,6 +61,23 @@ fun AavijaSplashScreen(
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "mesmerizing_splash")
+
+    // Let the mark arrive with a soft, short settle before the ambient loop.
+    var hasArrived by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(Unit) { hasArrived = true }
+    val arrivalScale by animateFloatAsState(
+        targetValue = if (hasArrived) 1f else 0.82f,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = 0.78f,
+            stiffness = 220f,
+        ),
+        label = "splash-arrival-scale",
+    )
+    val arrivalAlpha by animateFloatAsState(
+        targetValue = if (hasArrived) 1f else 0f,
+        animationSpec = tween(420, easing = FastOutSlowInEasing),
+        label = "splash-arrival-alpha",
+    )
 
     // Hypnotic organic breathing scale for the hero logo
     val logoScale by infiniteTransition.animateFloat(
@@ -190,7 +210,8 @@ fun AavijaSplashScreen(
         Box(
             modifier = Modifier
                 .size(width = 240.dp, height = 192.dp)
-                .scale(logoScale),
+                .scale(logoScale * arrivalScale)
+                .alpha(arrivalAlpha),
             contentAlignment = Alignment.Center,
         ) {
             Image(

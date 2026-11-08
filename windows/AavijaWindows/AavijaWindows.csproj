@@ -10,8 +10,8 @@
     <AssemblyName>Aavija</AssemblyName>
     <RootNamespace>Aavija</RootNamespace>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
-    <Version>1.1.0</Version>
-    <ApplicationVersion>1.1.0.0</ApplicationVersion>
+    <Version>1.2.0</Version>
+    <ApplicationVersion>1.2.0.0</ApplicationVersion>
     <Platforms>x64</Platforms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

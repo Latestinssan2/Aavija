@@ -804,10 +804,15 @@ class PeerConnector(
         header: FileTransfer.Header,
     ) {
         advertiser.reportPeerTransfer(
-            "Receiving ${header.filename} from ${peer.name}…",
+            "આવતું છે... Receiving ${header.filename} from ${peer.name}…",
             isReceiving = true,
         )
         AavijaSounds.transferStart()
+
+        val runtime = AavijaRuntime.get(context)
+        if (!runtime.uiVisible) {
+            wakeAndLaunchIncomingActivity(context, header.filename)
+        }
 
         val sink = try {
             ReceivedFiles.open(context, header.filename)

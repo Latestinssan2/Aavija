@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.0] - 2026-11-08
+
+### Added
+- Unified mid-air camera gesture mode with photo & file beam selector.
+- Hands-free gesture sharing: ✊ Fist to lock file, 🖐 Open palm to beam directly to paired devices.
+- Background & minimized reception: automatic high-priority wake with Gujarati "આવતું છે" (Aavtu Chhe) living quantum orb animation unfolding into received media viewer.
+- Google Sign-In with Firebase Authentication integration and verified identity badge.
+- Permanent release signing configuration and automated CI release workflow.
+- Dynamic app version synchronization across Settings and About views.
+
+### Changed
+- Bumped unified version to 1.2.0 across Android, macOS, and Windows.
+- Minimal home header with official settings icon.
+
 ## [1.1.0] - 2026-11-07
 
 ### Added

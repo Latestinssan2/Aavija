@@ -42,8 +42,9 @@ object AavijaSounds {
         pool = soundPool
     }
 
-    /** A screenshot was captured (currently Mac-only, kept for completeness). */
-    fun screenshot() = play(captureId, 0.85f)
+    /** A screenshot or hand-grab gesture was captured. */
+    // Keep this cue soft so it reads as feedback without startling people.
+    fun screenshot() = play(captureId, 0.24f)
 
     /** Bytes are about to move. */
     fun transferStart() = play(startId, 0.55f)

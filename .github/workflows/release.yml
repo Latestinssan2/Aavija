@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Release Tag Name (e.g. v1.0.0)'
+        description: 'Release Tag Name (e.g. v1.2.0)'
         required: false
-        default: 'v1.0.0'
+        default: 'v1.2.0'
 
 permissions:
   contents: write
@@ -41,15 +41,43 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x android/gradlew
 
-      - name: Build Android Debug APK
+      - name: Restore Firebase google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "$GOOGLE_SERVICES_JSON" | base64 --decode > android/app/google-services.json
+          fi
+
+      - name: Restore Release Keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > android/aavija-release.jks
+          fi
+
+      - name: Build Android APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'aavijaSecure2026' }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'aavija-key' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'aavijaSecure2026' }}
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon
+          if [ -f "aavija-release.jks" ]; then
+            ./gradlew assembleRelease --no-daemon
+          else
+            ./gradlew assembleDebug --no-daemon
+          fi
 
       - name: Prepare APK Artifact
         run: |
           mkdir -p artifacts
-          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/Aavija.apk
+          if [ -f "android/app/build/outputs/apk/release/app-release.apk" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk artifacts/Aavija.apk
+          else
+            cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/Aavija.apk
+          fi
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4

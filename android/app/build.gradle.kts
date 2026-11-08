@@ -3,6 +3,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -13,13 +14,29 @@ android {
         applicationId = "com.aartiq.aavija"
         minSdk = 26          // Android 8.0 — matches the plan
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.2.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystoreFile = rootProject.file("aavija-release.jks")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "aavijaSecure2026"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "aavija-key"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "aavijaSecure2026"
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            val keystoreFile = rootProject.file("aavija-release.jks")
+            if (keystoreFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -51,13 +68,21 @@ android {
 
 dependencies {
     // Minimal Compose stack — enough for one screen with text + status.
-    implementation(platform("androidx.compose:compose-bom:2024.10.01"))
+    implementation(platform("androidx.compose:compose-bom:2025.05.01"))
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    // Real-time backdrop sampling for the translucent Compose panels.
+    implementation("dev.chrisbanes.haze:haze:1.6.10")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Firebase BoM & Firebase Authentication
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.android.gms:play-services-auth:21.3.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // BouncyCastle: used ONLY to mint a self-signed X.509 certificate for the
     // TLS server (Phase 3a). We don't register it as a JCA provider — we just

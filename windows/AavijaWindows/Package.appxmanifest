@@ -3,7 +3,7 @@
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap rescap">
-  <Identity Name="Latestinssan.Aartiq" Publisher="CN=CF2DF47B-A710-4E1D-8C29-FC648FFA1CAE" Version="1.1.0.0" />
+  <Identity Name="Latestinssan.Aartiq" Publisher="CN=CF2DF47B-A710-4E1D-8C29-FC648FFA1CAE" Version="1.2.0.0" />
   <Properties>
     <DisplayName>Aavija</DisplayName>
     <PublisherDisplayName>Latestinssan</PublisherDisplayName>

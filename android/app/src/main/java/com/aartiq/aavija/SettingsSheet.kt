@@ -25,6 +25,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,10 +35,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 
 /**
  * Settings Sheet for Aavija.
@@ -62,6 +65,8 @@ fun SettingsSheet(
     pairedPhoneName: String? = null,
     onUnpairDevice: ((String?) -> Unit)? = null,
     onOpenGemini: (() -> Unit)? = null,
+    authManager: AavijaAuthManager? = null,
+    onSignInGoogle: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalAavijaColors.current
@@ -147,6 +152,182 @@ fun SettingsSheet(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
+                    // Section 0: Firebase & Google Sign-In
+                    val authUser = authManager?.user?.collectAsState()?.value
+                    val authStatus = authManager?.statusMessage?.collectAsState()?.value
+
+                    SettingsSection(title = "🔥 Google Account & Firebase", isDark = isDark) {
+                        if (authUser != null) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isDark) Color(0xFF131D33) else Color(0xFFF1F5F9),
+                                border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = Color(0xFF00E5FF).copy(alpha = 0.2f),
+                                                modifier = Modifier.size(46.dp),
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    if (!authUser.photoUrl.isNullOrBlank()) {
+                                                        AsyncImage(
+                                                            model = authUser.photoUrl,
+                                                            contentDescription = authUser.displayName,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .clip(CircleShape),
+                                                        )
+                                                    } else {
+                                                        Text(
+                                                            text = (authUser.displayName?.firstOrNull() ?: authUser.email?.firstOrNull() ?: 'U').uppercase(),
+                                                            fontSize = 18.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = colors.textPrimary,
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            Spacer(Modifier.width(12.dp))
+
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = authUser.displayName ?: "Google User",
+                                                    fontSize = 14.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = colors.textPrimary,
+                                                    maxLines = 1,
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = authUser.email ?: "Firebase Authenticated",
+                                                    fontSize = 12.sp,
+                                                    color = colors.textSecondary,
+                                                    maxLines = 1,
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFFEF4444).copy(alpha = 0.15f),
+                                            border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f)),
+                                            modifier = Modifier.clickable { authManager?.signOut() },
+                                        ) {
+                                            Text(
+                                                text = "Sign Out",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFEF4444),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF10B981)),
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "Firebase Auth Active • Verified Identity",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color(0xFF10B981),
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isDark) Color(0xFF131D33) else Color(0xFFF1F5F9),
+                                border = BorderStroke(1.dp, if (isDark) Color.White.copy(alpha = 0.1f) else Color.Black.copy(alpha = 0.1f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSignInGoogle?.invoke() },
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color.White,
+                                            modifier = Modifier.size(40.dp),
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(text = "G", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF4285F4))
+                                            }
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column {
+                                            Text(
+                                                text = "Sign in with Google",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colors.textPrimary,
+                                            )
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                text = "Sync verified trust & devices via Firebase",
+                                                fontSize = 11.sp,
+                                                color = colors.textSecondary,
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = colors.primary.copy(alpha = 0.15f),
+                                        border = BorderStroke(1.dp, colors.primary.copy(alpha = 0.4f)),
+                                    ) {
+                                        Text(
+                                            text = "Sign In",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = colors.primary,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!authStatus.isNullOrBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = authStatus,
+                                fontSize = 11.sp,
+                                color = colors.textSecondary,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                            )
+                        }
+                    }
+
                     // Section 1: Appearance & Theme Mode
                     SettingsSection(title = "🎨 Appearance & Theme", isDark = isDark) {
                         Row(
@@ -367,9 +548,23 @@ fun SettingsSheet(
 
                     // Section 5: About & Developer Credits
                     SettingsSection(title = "ℹ️ About Aavija", isDark = isDark) {
+                        val appVersion = remember(context) {
+                            runCatching {
+                                val pInfo = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                                    context.packageManager.getPackageInfo(
+                                        context.packageName,
+                                        android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                                    )
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    context.packageManager.getPackageInfo(context.packageName, 0)
+                                }
+                                pInfo.versionName ?: "1.2.0"
+                            }.getOrDefault("1.2.0")
+                        }
                         Column(modifier = Modifier.padding(vertical = 4.dp)) {
                             Text(
-                                text = "Aavija (આવી જા) v1.1.0",
+                                text = "Aavija (આવી જા) v$appVersion",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = colors.textPrimary,
