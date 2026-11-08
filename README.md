@@ -1,5 +1,7 @@
 # આવી જા (Aavija) — Gesture AirDrop
 
+![Downloads](https://img.shields.io/github/downloads/Latestinssan2/Aavija/total?label=downloads)
+
 > **Native Hand-Gesture File & Screenshot Sharing between macOS and Android over Local Wi-Fi.**  
 > Zero cloud relay • Sub-millisecond peer-to-peer • TLS 1.3 encrypted • 100% Native
 

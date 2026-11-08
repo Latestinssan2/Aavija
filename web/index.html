@@ -874,6 +874,13 @@
         // Replace any visible version strings with the live release tag.
         document.title = document.title.replace(/v1\.\d+(\.\d+)?/g, tag);
         document.body.innerHTML = document.body.innerHTML.replace(/v1\.\d+(\.\d+)?/g, tag);
+
+        // Live download count from the latest release.
+        try {
+          const dl = (data.assets || []).reduce((s, a) => s + (a.download_count || 0), 0);
+          const el = document.getElementById('dl-total');
+          if (el) el.textContent = dl.toLocaleString();
+        } catch(e){}
       } catch(e){ console.warn('version fetch failed', e); }
     })();
   </script>
@@ -884,6 +891,7 @@
       <img src="logo-wide-header.png" alt="Aavija" class="h-6 w-auto object-contain">
       <span>આવી જા (Aavija) • સર્જક: પ્રીત પટેલ (Preet Patel)</span>
     </div>
+    <span class="text-slate-400">Downloads: <span id="dl-total">…</span></span>
     <a href="/privacy" class="text-slate-400 hover:text-white transition-colors">Privacy Policy</a>
     <a href="/docs" class="text-slate-400 hover:text-white transition-colors">Docs</a>
     <div class="flex items-center gap-6">
