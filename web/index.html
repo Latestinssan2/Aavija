@@ -872,6 +872,7 @@
           // keep latest path; update version labels if present
         });
         // Replace any visible version strings with the live release tag.
+        document.title = document.title.replace(/v1\.\d+\.\d+/g, tag);
         document.body.innerHTML = document.body.innerHTML.replace(/v1\.\d+\.\d+/g, tag);
       } catch(e){ console.warn('version fetch failed', e); }
     })();

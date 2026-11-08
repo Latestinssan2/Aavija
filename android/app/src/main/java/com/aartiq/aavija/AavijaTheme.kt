@@ -20,9 +20,9 @@ enum class AppThemeMode {
     LIGHT;
 
     fun next(): AppThemeMode = when (this) {
-        SYSTEM -> if (true) DARK else LIGHT
+        SYSTEM -> DARK
         DARK -> LIGHT
-        LIGHT -> DARK
+        LIGHT -> SYSTEM
     }
 }
 

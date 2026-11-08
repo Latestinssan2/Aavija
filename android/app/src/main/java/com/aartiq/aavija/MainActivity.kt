@@ -33,6 +33,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -135,23 +136,38 @@ class MainActivity : ComponentActivity() {
         requestLegacyStoragePermissionIfNeeded()
 
         setContent {
-            var themeMode by rememberSaveable { mutableStateOf(AppThemeMode.DARK) }
+            var themeMode by rememberSaveable { mutableStateOf(AppThemeMode.SYSTEM) }
+            val isDirectAction = intent.getBooleanExtra("enter_blackout", false) ||
+                intent.getStringExtra("show_image_uri") != null
+            var showSplash by rememberSaveable { mutableStateOf(!isDirectAction) }
 
             AavijaAppTheme(themeMode = themeMode) {
-                AdvertiserScreen(
-                    runtime = runtime,
-                    advertiser = advertiser,
-                    macDiscovery = macDiscovery,
-                    peerDiscovery = peerDiscovery,
-                    peerConnector = peerConnector,
-                    initialBlackout = intent.getBooleanExtra("enter_blackout", false),
-                    initialImageUri = intent.getStringExtra("show_image_uri"),
-                    initialImageName = intent.getStringExtra("show_image_name"),
-                    themeMode = themeMode,
-                    onThemeToggle = {
-                        themeMode = themeMode.next()
-                    },
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    AdvertiserScreen(
+                        runtime = runtime,
+                        advertiser = advertiser,
+                        macDiscovery = macDiscovery,
+                        peerDiscovery = peerDiscovery,
+                        peerConnector = peerConnector,
+                        initialBlackout = intent.getBooleanExtra("enter_blackout", false),
+                        initialImageUri = intent.getStringExtra("show_image_uri"),
+                        initialImageName = intent.getStringExtra("show_image_name"),
+                        themeMode = themeMode,
+                        onThemeToggle = {
+                            themeMode = themeMode.next()
+                        },
+                    )
+
+                    AnimatedVisibility(
+                        visible = showSplash,
+                        enter = fadeIn(tween(150)),
+                        exit = fadeOut(tween(450)) + scaleOut(targetScale = 1.08f, animationSpec = tween(450)),
+                    ) {
+                        AavijaSplashScreen(
+                            onDismiss = { showSplash = false },
+                        )
+                    }
+                }
             }
         }
     }
@@ -698,7 +714,7 @@ private fun HeaderBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val isDark = themeMode == AppThemeMode.DARK
+            val isDark = colors.isDark
             val logoBg = if (isDark) Color.Black else Color.White
             val logoBorder = if (isDark) Color.White.copy(alpha = 0.22f) else Color(0xFF00E5FF).copy(alpha = 0.35f)
             val logoDrawable = if (isDark) R.drawable.app_logo_bright else R.drawable.app_logo
