@@ -861,6 +861,22 @@
     </div>
   </section>
 
+  <script>
+    (async function(){
+      try {
+        const res = await fetch('https://api.github.com/repos/Latestinssan2/Aavija/releases/latest');
+        if(!res.ok) return;
+        const data = await res.json();
+        const tag = data.tag_name || 'latest';
+        document.querySelectorAll('a[href*="releases/latest/download/"]').forEach(a => {
+          // keep latest path; update version labels if present
+        });
+        // Replace any visible version strings with the live release tag.
+        document.body.innerHTML = document.body.innerHTML.replace(/v1\.\d+\.\d+/g, tag);
+      } catch(e){ console.warn('version fetch failed', e); }
+    })();
+  </script>
+
   <!-- Footer (No GitHub link, Preet Patel only) -->
   <footer class="relative z-10 border-t border-white/5 py-12 px-6 max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6 text-xs text-slate-500">
     <div class="flex items-center gap-3">
