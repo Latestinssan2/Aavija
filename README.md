@@ -5,9 +5,8 @@
 > **Native Hand-Gesture File & Screenshot Sharing between macOS and Android over Local Wi-Fi.**  
 > Zero cloud relay • Sub-millisecond peer-to-peer • TLS 1.3 encrypted • 100% Native
 
-
-
-https://github.com/user-attachments/assets/56cc402f-568d-458c-9624-f69b874099e6
+ 
+<img width="1536" height="304" alt="logo-wide" src="https://github.com/user-attachments/assets/390487fc-335b-4fd6-9ea3-96696d007185" />
 
 
 
