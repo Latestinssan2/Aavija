@@ -1,7 +1,9 @@
 package com.aartiq.aavija
 
 import android.content.Context
+import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
+import android.media.ImageReader
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -84,23 +86,41 @@ class GestureCameraController(private val context: Context) : LifecycleOwner {
     private var lastAnalysisAt = 0L
     private var lastHandAt = 0L
 
-    private var dummySurfaceTexture: SurfaceTexture? = null
+    private var dummyReader: ImageReader? = null
     private var dummySurface: Surface? = null
 
     /**
      * Offscreen dummy surface provider that keeps the CameraX capture session
-     * continuously alive in the background when the activity is minimized,
-     * preventing Android OS from revoking background camera access.
+     * continuously alive in the background when the activity is minimized.
+     * Uses an ImageReader that immediately drains and recycles each frame so
+     * the buffer queue never starves and Camera2 never drops or resets the session.
      */
     private val dummySurfaceProvider = Preview.SurfaceProvider { request ->
-        val texture = SurfaceTexture(0).also { dummySurfaceTexture = it }
-        texture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
-        val surface = Surface(texture).also { dummySurface = it }
-        request.provideSurface(surface, ContextCompat.getMainExecutor(context)) {
-            surface.release()
-            texture.release()
+        try {
+            dummyReader?.close()
+            dummySurface?.release()
+        } catch (_: Exception) {}
+
+        val width = request.resolution.width
+        val height = request.resolution.height
+        val reader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 2).also {
+            dummyReader = it
+        }
+        val executor = ContextCompat.getMainExecutor(context)
+        reader.setOnImageAvailableListener({ r ->
+            try {
+                r.acquireLatestImage()?.close()
+            } catch (_: Exception) {}
+        }, Handler(Looper.getMainLooper()))
+
+        val surface = reader.surface.also { dummySurface = it }
+        request.provideSurface(surface, executor) {
+            try {
+                surface.release()
+                reader.close()
+            } catch (_: Exception) {}
             if (dummySurface == surface) dummySurface = null
-            if (dummySurfaceTexture == texture) dummySurfaceTexture = null
+            if (dummyReader == reader) dummyReader = null
         }
     }
 
@@ -174,6 +194,12 @@ class GestureCameraController(private val context: Context) : LifecycleOwner {
         previewUseCase?.setSurfaceProvider(null)
         previewUseCase = null
         previewSurface = null
+        try {
+            dummyReader?.close()
+            dummySurface?.release()
+        } catch (_: Exception) {}
+        dummyReader = null
+        dummySurface = null
 
         try {
             landmarker?.close()

@@ -11,23 +11,35 @@ import com.google.android.gms.common.api.ApiException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.io.File
+import java.net.URL
 
 data class AavijaUser(
     val uid: String,
     val email: String?,
     val displayName: String?,
     val photoUrl: String?,
+    val cachedPhotoPath: String? = null,
     val isAnonymous: Boolean = false,
 )
 
 /**
  * Manages Google Sign-In with Firebase Authentication for Aavija.
+ * Automatically persists user sessions in SharedPreferences and caches
+ * the Google profile avatar offline so credentials and photos load instantly
+ * on app restart even when offline.
  */
 class AavijaAuthManager(private val context: Context) {
     private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    private val prefs = context.getSharedPreferences("aavija_auth_prefs", Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _user = MutableStateFlow<AavijaUser?>(null)
     val user: StateFlow<AavijaUser?> = _user.asStateFlow()
@@ -41,23 +53,115 @@ class AavijaAuthManager(private val context: Context) {
     private var googleSignInClient: GoogleSignInClient? = null
 
     init {
+        // 1. Immediately restore saved offline user session so there's zero UI blink on launch
+        restoreOfflineUser()
+
+        // 2. Sync with Firebase Auth state
         updateFromFirebase(auth.currentUser)
         auth.addAuthStateListener { firebaseAuth ->
             updateFromFirebase(firebaseAuth.currentUser)
+        }
+
+        // 3. Fallback sync with last Google Account on device if Firebase is silent
+        if (_user.value == null) {
+            val lastGoogle = GoogleSignIn.getLastSignedInAccount(context)
+            if (lastGoogle != null) {
+                saveUser(
+                    uid = lastGoogle.id ?: "google_persisted",
+                    email = lastGoogle.email,
+                    displayName = lastGoogle.displayName,
+                    photoUrl = lastGoogle.photoUrl?.toString(),
+                    isAnonymous = false,
+                )
+            }
+        }
+    }
+
+    private fun restoreOfflineUser() {
+        val isLoggedIn = prefs.getBoolean("auth_logged_in", false)
+        if (!isLoggedIn) return
+
+        val uid = prefs.getString("auth_uid", null) ?: return
+        val email = prefs.getString("auth_email", null)
+        val displayName = prefs.getString("auth_display_name", null)
+        val photoUrl = prefs.getString("auth_photo_url", null)
+        val cachedPath = prefs.getString("auth_cached_photo_path", null)
+
+        val validCachedPath = if (cachedPath != null && File(cachedPath).exists()) cachedPath else null
+
+        _user.value = AavijaUser(
+            uid = uid,
+            email = email,
+            displayName = displayName,
+            photoUrl = photoUrl,
+            cachedPhotoPath = validCachedPath,
+            isAnonymous = false,
+        )
+    }
+
+    private fun saveUser(
+        uid: String,
+        email: String?,
+        displayName: String?,
+        photoUrl: String?,
+        isAnonymous: Boolean,
+    ) {
+        val cachedFile = File(context.filesDir, "google_avatar.png")
+        val currentCachedPath = if (cachedFile.exists()) cachedFile.absolutePath else null
+
+        val u = AavijaUser(
+            uid = uid,
+            email = email,
+            displayName = displayName,
+            photoUrl = photoUrl,
+            cachedPhotoPath = currentCachedPath,
+            isAnonymous = isAnonymous,
+        )
+        _user.value = u
+
+        prefs.edit()
+            .putBoolean("auth_logged_in", true)
+            .putString("auth_uid", uid)
+            .putString("auth_email", email)
+            .putString("auth_display_name", displayName)
+            .putString("auth_photo_url", photoUrl)
+            .putString("auth_cached_photo_path", currentCachedPath)
+            .apply()
+
+        // Cache the avatar image offline in the background
+        if (!photoUrl.isNullOrBlank()) {
+            cacheAvatarOffline(photoUrl)
+        }
+    }
+
+    private fun cacheAvatarOffline(urlStr: String) {
+        scope.launch {
+            try {
+                val file = File(context.filesDir, "google_avatar.png")
+                val url = URL(urlStr)
+                url.openStream().use { input ->
+                    file.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                prefs.edit().putString("auth_cached_photo_path", file.absolutePath).apply()
+                _user.value = _user.value?.copy(cachedPhotoPath = file.absolutePath)
+                Log.i("AavijaAuth", "Google avatar successfully cached offline: ${file.absolutePath}")
+            } catch (e: Exception) {
+                Log.w("AavijaAuth", "Could not cache Google avatar offline: ${e.message}")
+            }
         }
     }
 
     private fun updateFromFirebase(firebaseUser: FirebaseUser?) {
         if (firebaseUser != null) {
-            _user.value = AavijaUser(
+            saveUser(
                 uid = firebaseUser.uid,
                 email = firebaseUser.email,
                 displayName = firebaseUser.displayName,
                 photoUrl = firebaseUser.photoUrl?.toString(),
                 isAnonymous = firebaseUser.isAnonymous,
             )
-        } else {
-            _user.value = null
         }
     }
 
@@ -95,14 +199,23 @@ class AavijaAuthManager(private val context: Context) {
                             _statusMessage.value = "Signed in as ${u?.displayName ?: u?.email ?: "User"}"
                             onComplete(true, null)
                         } else {
-                            val err = authTask.exception?.message ?: "Firebase authentication failed."
-                            _statusMessage.value = err
-                            onComplete(false, err)
+                            // Firebase cloud rejected (e.g. SHA-1 pending in console):
+                            // Still preserve verified Google identity locally
+                            saveUser(
+                                uid = account.id ?: "google_local",
+                                email = account.email,
+                                displayName = account.displayName,
+                                photoUrl = account.photoUrl?.toString(),
+                                isAnonymous = false,
+                            )
+                            val msg = "Connected to Google Account (${account.email})."
+                            _statusMessage.value = msg
+                            onComplete(true, null)
                         }
                     }
             } else {
                 _isLoading.value = false
-                _user.value = AavijaUser(
+                saveUser(
                     uid = account.id ?: "google_local",
                     email = account.email,
                     displayName = account.displayName,
@@ -129,6 +242,13 @@ class AavijaAuthManager(private val context: Context) {
     }
 
     fun signOut(onComplete: (() -> Unit)? = null) {
+        // Clear offline cached prefs & avatar
+        prefs.edit().clear().apply()
+        try {
+            val file = File(context.filesDir, "google_avatar.png")
+            if (file.exists()) file.delete()
+        } catch (_: Exception) {}
+
         auth.signOut()
         googleSignInClient?.signOut()?.addOnCompleteListener {
             _user.value = null

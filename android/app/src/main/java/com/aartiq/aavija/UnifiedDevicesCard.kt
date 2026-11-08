@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,7 +35,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -190,12 +193,6 @@ private fun UnifiedDeviceRow(
 ) {
     val colors = LocalAavijaColors.current
 
-    val platformIcon = when (device.platform) {
-        TargetPlatform.MAC -> "🍎"
-        TargetPlatform.WINDOWS -> "🪟"
-        TargetPlatform.ANDROID -> "📱"
-    }
-
     val platformLabel = when (device.platform) {
         TargetPlatform.MAC -> "macOS"
         TargetPlatform.WINDOWS -> "Windows"
@@ -242,8 +239,31 @@ private fun UnifiedDeviceRow(
                     },
                     modifier = Modifier.size(42.dp),
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(platformIcon, fontSize = 20.sp)
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(10.dp)) {
+                        when (device.platform) {
+                            TargetPlatform.MAC -> {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_apple_logo_clean),
+                                    contentDescription = "Apple Mac",
+                                    modifier = Modifier.size(20.dp),
+                                    colorFilter = ColorFilter.tint(if (isDark) Color.White else Color.Black),
+                                )
+                            }
+                            TargetPlatform.WINDOWS -> {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_windows_logo),
+                                    contentDescription = "Windows PC",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            TargetPlatform.ANDROID -> {
+                                Image(
+                                    painter = painterResource(id = R.drawable.ic_android_logo),
+                                    contentDescription = "Android Phone",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
                     }
                 }
 

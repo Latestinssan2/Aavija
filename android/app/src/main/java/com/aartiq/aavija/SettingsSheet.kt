@@ -3,6 +3,7 @@ package com.aartiq.aavija
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -180,9 +182,10 @@ fun SettingsSheet(
                                                 modifier = Modifier.size(46.dp),
                                             ) {
                                                 Box(contentAlignment = Alignment.Center) {
-                                                    if (!authUser.photoUrl.isNullOrBlank()) {
+                                                    val avatarModel = authUser.cachedPhotoPath ?: authUser.photoUrl
+                                                    if (!avatarModel.isNullOrBlank()) {
                                                         AsyncImage(
-                                                            model = authUser.photoUrl,
+                                                            model = avatarModel,
                                                             contentDescription = authUser.displayName,
                                                             contentScale = ContentScale.Crop,
                                                             modifier = Modifier
@@ -276,11 +279,18 @@ fun SettingsSheet(
                                     ) {
                                         Surface(
                                             shape = CircleShape,
-                                            color = Color.White,
+                                            color = if (isDark) Color.Black else Color.White,
+                                            border = if (isDark) BorderStroke(1.dp, Color(0xFF2D3748)) else null,
                                             modifier = Modifier.size(40.dp),
+                                            shadowElevation = if (isDark) 0.dp else 2.dp,
                                         ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Text(text = "G", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF4285F4))
+                                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(8.dp)) {
+                                                Image(
+                                                    painter = painterResource(id = R.drawable.ic_google_logo),
+                                                    contentDescription = "Google Logo",
+                                                    modifier = Modifier.size(24.dp),
+                                                    contentScale = ContentScale.Fit,
+                                                )
                                             }
                                         }
                                         Spacer(Modifier.width(12.dp))
@@ -439,7 +449,20 @@ fun SettingsSheet(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(if (isWin) "🪟" else "🍎", fontSize = 16.sp)
+                                    if (isWin) {
+                                        Image(
+                                            painter = painterResource(id = R.drawable.ic_windows_logo),
+                                            contentDescription = "Windows PC",
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    } else {
+                                        Image(
+                                            painter = painterResource(id = R.drawable.ic_apple_logo_clean),
+                                            contentDescription = "macOS",
+                                            modifier = Modifier.size(18.dp),
+                                            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(if (isDark) Color.White else Color.Black),
+                                        )
+                                    }
                                     Spacer(Modifier.width(10.dp))
                                     Column {
                                         Text(

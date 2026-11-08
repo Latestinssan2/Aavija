@@ -308,7 +308,19 @@ fun AdvertiserScreen(
     val scope = rememberCoroutineScope()
     val hazeState = rememberHazeState()
 
-    var showGuide by rememberSaveable { mutableStateOf(false) }
+    val prefs = remember(context) {
+        context.getSharedPreferences("aavija_prefs", Context.MODE_PRIVATE)
+    }
+    val hasSeenGuide = remember(prefs) {
+        prefs.getBoolean("has_seen_startup_guide_v120", false)
+    }
+    var showGuide by rememberSaveable { mutableStateOf(!hasSeenGuide) }
+
+    LaunchedEffect(hasSeenGuide) {
+        if (!hasSeenGuide) {
+            prefs.edit().putBoolean("has_seen_startup_guide_v120", true).apply()
+        }
+    }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showGemini by rememberSaveable { mutableStateOf(false) }
     var geminiQuery by remember { mutableStateOf<String?>(null) }

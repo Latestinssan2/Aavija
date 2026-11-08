@@ -304,6 +304,22 @@ class AavijaRuntime private constructor(context: Context) {
     private fun triggerDirectReleaseTransfer(file: OutgoingFile) {
         val adState = advertiser.state.value
         val peerState = peerConnector.state.value
+        val discoveredMacs = macDiscovery.macs.value
+
+        val targetMac = if (adState.selectedMac != null) {
+            adState.selectedMac
+        } else if (adState.pairedMacName != null) {
+            adState.pairedMacName
+        } else if (discoveredMacs.isNotEmpty()) {
+            discoveredMacs.first().name
+        } else null
+
+        if (targetMac != null && !peerState.targetActive && !adState.phoneTargetActive) {
+            advertiser.selectMac(targetMac)
+            advertiser.triggerDirectRelease()
+            advertiser.reportStatus("Direct Release 🖐: Beaming ${file.name} to $targetMac…")
+            return
+        }
 
         if (peerState.targetActive || adState.phoneTargetActive) {
             advertiser.reportPeerTransfer(
