@@ -5,8 +5,11 @@
 > **Native Hand-Gesture File & Screenshot Sharing between macOS and Android over Local Wi-Fi.**  
 > Zero cloud relay • Sub-millisecond peer-to-peer • TLS 1.3 encrypted • 100% Native
 
- 
 <img width="1536" height="304" alt="logo-wide" src="https://github.com/user-attachments/assets/390487fc-335b-4fd6-9ea3-96696d007185" />
+
+[![Watch Aavija Official Trailer](https://img.youtube.com/vi/MzRZ1XpqWqM/maxresdefault.jpg)](https://youtu.be/MzRZ1XpqWqM)
+
+▶️ **[Watch the Official Trailer on YouTube](https://youtu.be/MzRZ1XpqWqM)**
 
 
 

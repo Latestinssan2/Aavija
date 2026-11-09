@@ -29,3 +29,4 @@ release-artifacts/
 .vercel/
 web/.vercel/
 dist/
+*.mp4

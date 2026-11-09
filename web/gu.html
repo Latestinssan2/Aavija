@@ -435,6 +435,7 @@
     </a>
 
     <nav class="hidden md:flex items-center gap-7 text-sm font-semibold text-slate-300">
+      <a href="#trailer" class="hover:text-cyan-400 transition-colors" data-i18n="nav_trailer">ટ્રેલર</a>
       <a href="#demo" class="hover:text-cyan-400 transition-colors" data-i18n="nav_demo">લાઇવ ડેમો</a>
       <a href="#features" class="hover:text-cyan-400 transition-colors" data-i18n="nav_features">ખાસિયતો</a>
       <a href="#architecture" class="hover:text-cyan-400 transition-colors" data-i18n="nav_how">કાર્યપદ્ધતિ</a>
@@ -576,6 +577,36 @@
 
         </div>
 
+      </div>
+    </div>
+  </section>
+
+  <!-- Video Trailer Section -->
+  <section id="trailer" class="relative z-10 max-w-5xl mx-auto px-6 py-16">
+    <div class="text-center max-w-3xl mx-auto mb-10">
+      <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/25 text-cyan-300 text-xs font-bold uppercase tracking-wider mb-4">
+        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+        <span data-i18n="trailer_pill">વિડિઓ ડેમો • OFFICIAL TRAILER</span>
+      </div>
+      <h2 class="font-display font-black text-3xl sm:text-5xl tracking-tight mb-4 text-white" data-i18n="trailer_title">
+        Aavija ને કાર્ય કરતાં જુઓ
+      </h2>
+      <p class="text-slate-400 font-medium text-base sm:text-lg" data-i18n="trailer_sub">
+        કેવી રીતે ફક્ત હવામાં હાથ હલાવીને મેક અને ફોન વચ્ચે ફાઇલો પળવારમાં આવે અને જાય છે તે જુઓ.
+      </p>
+    </div>
+
+    <!-- Video Card Container with Glowing Aurora Border -->
+    <div class="glass-card rounded-3xl p-3 sm:p-5 relative overflow-hidden shadow-2xl border border-cyan-500/30">
+      <div class="relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-950 border border-white/10 shadow-inner">
+        <iframe 
+          class="w-full h-full absolute inset-0"
+          src="https://www.youtube-nocookie.com/embed/MzRZ1XpqWqM?rel=0&modestbranding=1" 
+          title="Aavija — Gesture AirDrop Official Trailer" 
+          frameborder="0" 
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+          allowfullscreen>
+        </iframe>
       </div>
     </div>
   </section>
@@ -856,6 +887,7 @@
     const translations = {
       gu: {
         tagline: "જેસ્ચર એરડ્રોપ • Wi-Fi",
+        nav_trailer: "ટ્રેલર",
         nav_demo: "લાઇવ ડેમો",
         nav_features: "ખાસિયતો",
         nav_how: "કાર્યપદ્ધતિ",
@@ -868,6 +900,9 @@
         hero_subtitle: "મેક પર હવામાં પકડો — એન્ડ્રોઇડ ફોનમાં તરત મેળવો. ક્લાઉડ વગર, સીધા વાઇ-ફાઇ પર, TLS 1.3 એન્ક્રિપ્શન સાથે ક્ષણવારમાં.",
         btn_mac_download: "મેક માટે ડાઉનલોડ (.DMG)",
         btn_android_download: "એન્ડ્રોઇડ APK (.APK)",
+        trailer_pill: "વિડિઓ ડેમો • OFFICIAL TRAILER",
+        trailer_title: "Aavija ને કાર્ય કરતાં જુઓ",
+        trailer_sub: "કેવી રીતે ફક્ત હવામાં હાથ હલાવીને મેક અને ફોન વચ્ચે ફાઇલો પળવારમાં આવે અને જાય છે તે જુઓ.",
         sim_status: "લાઇવ સિમ્યુલેશન: લોકલ વાઇ-ફાઇ (192.168.1.0/24)",
         sim_btn: "હાથના ઇશારાનું સિમ્યુલેશન જુઓ",
         sim_phone_wait: "હાથ ખોલવાના ઇશારાની રાહ…",
@@ -913,6 +948,7 @@
       },
       en: {
         tagline: "Gesture AirDrop • Wi-Fi",
+        nav_trailer: "Trailer",
         nav_demo: "Live Demo",
         nav_features: "Features",
         nav_how: "How It Works",
@@ -925,6 +961,9 @@
         hero_subtitle: "Hold in mid-air on your Mac — catch on your Android phone. Zero cloud, end-to-end encrypted with TLS 1.3 in sub-millisecond local speed.",
         btn_mac_download: "Download for macOS (.DMG)",
         btn_android_download: "Download Android APK (.APK)",
+        trailer_pill: "VIDEO DEMO • OFFICIAL TRAILER",
+        trailer_title: "Watch Aavija in Action",
+        trailer_sub: "See how mid-air hand gestures beam photos and files between your Mac, PC, and Android in real-time.",
         sim_status: "Live Simulation: Local Wi-Fi (192.168.1.0/24)",
         sim_btn: "Simulate Gesture Transfer",
         sim_phone_wait: "Waiting for RELEASE gesture…",
